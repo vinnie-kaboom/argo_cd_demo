@@ -16,6 +16,8 @@
 
   "onCreateCommand": "bash .devcontainer/install.sh",
 
+  "postStartCommand": "bash .devcontainer/create-cluster.sh",
+
   "customizations": {
     "vscode": {
       "extensions": [
@@ -40,7 +42,8 @@
   "portsAttributes": {
     "8080": {
       "label": "ArgoCD UI",
-      "onAutoForward": "openBrowser"
+      "onAutoForward": "openBrowser",
+      "visibility": "public"
     }
   }
 }
