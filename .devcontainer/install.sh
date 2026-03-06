@@ -22,6 +22,13 @@ sudo install -m 555 /tmp/argocd /usr/local/bin/argocd
 rm /tmp/argocd
 echo "✅ ArgoCD CLI installed"
 
+# ── k9s ───────────────────────────────────────────
+echo ""
+echo "🚀 Installing k9s..."
+curl -sL https://github.com/derailed/k9s/releases/latest/download/k9s_Linux_amd64.tar.gz | tar xz -C /tmp
+sudo mv /tmp/k9s /usr/local/bin/k9s
+echo "✅ k9s installed: $(k9s version --short)"
+
 # ── ArgoCD Helm Repo ───────────────────────────────
 echo ""
 echo "🚀 Adding ArgoCD Helm repo..."
@@ -46,6 +53,7 @@ echo "   kind      - create/manage local k8s clusters"
 echo "   kubectl   - interact with clusters"
 echo "   helm      - install helm charts"
 echo "   argocd    - ArgoCD CLI"
+echo "   k9s       - terminal UI for Kubernetes"
 echo "   claude    - Claude Code CLI"
 echo ""
 echo " To create your cluster run:"
