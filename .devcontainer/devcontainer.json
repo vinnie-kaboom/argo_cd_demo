@@ -14,9 +14,13 @@
     "ghcr.io/devcontainers/features/github-cli:1": {}
   },
 
+  "containerEnv": {
+    "DOCKER_API_VERSION": "1.41"
+  },
+
   "onCreateCommand": "bash .devcontainer/install.sh",
 
-  "postStartCommand": "bash .devcontainer/create-cluster.sh",
+  "postStartCommand": "sudo chmod 666 /var/run/docker.sock && export DOCKER_API_VERSION=1.43 && bash .devcontainer/create-cluster.sh",
 
   "customizations": {
     "vscode": {
