@@ -30,6 +30,7 @@ else
   helm install argocd argo/argo-cd \
     --namespace argocd \
     --set server.service.type=NodePort \
+    --set configs.params."server\.insecure"=true \
     --wait
   echo "✅ ArgoCD installed"
 fi
@@ -38,7 +39,7 @@ fi
 echo ""
 echo "🚀 Starting ArgoCD port-forward..."
 pkill -f "port-forward.*argocd-server" 2>/dev/null || true
-kubectl port-forward svc/argocd-server -n argocd 8080:443 &
+kubectl port-forward svc/argocd-server -n argocd 8080:80 &
 sleep 3
 echo "✅ Port-forward started"
 
@@ -49,12 +50,12 @@ echo " ✅ Environment is ready!"
 echo "================================================"
 echo ""
 echo " On Windows/Mac — open:"
-echo "   https://localhost:8080"
+echo "   http://localhost:8080"
 echo ""
 echo " On iPad — open the Ports tab in VS Code"
 echo " and click the 🌐 globe icon next to port 8080"
 echo " URL will look like:"
-echo "   https://YOUR-CODESPACE-NAME-8080.app.github.dev"
+echo "   http://YOUR-CODESPACE-NAME-8080.app.github.dev"
 echo ""
 echo " Get admin password:"
 echo "   kubectl get secret argocd-initial-admin-secret \\"
