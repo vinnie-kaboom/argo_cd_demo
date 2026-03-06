@@ -39,7 +39,7 @@ fi
 echo ""
 echo "🚀 Starting ArgoCD port-forward..."
 pkill -f "port-forward.*argocd-server" 2>/dev/null || true
-kubectl port-forward svc/argocd-server -n argocd 8080:80 &
+nohup kubectl port-forward svc/argocd-server -n argocd 8080:80 --address 0.0.0.0 > /tmp/argocd-portforward.log 2>&1 &
 sleep 3
 echo "✅ Port-forward started"
 
