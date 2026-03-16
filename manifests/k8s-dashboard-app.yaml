@@ -22,3 +22,9 @@ spec:
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      name: k8s-dashboard-headlamp
+      jsonPointers:
+        - /spec/template/spec/hostUsers
