@@ -6,7 +6,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/lm-academy/argocd-example-apps-labs.git
+    repoURL: https://github.com/vinnie-kaboom/argocd-example-apps-1.git
     path: helm-guestbook
     targetRevision: HEAD
   destination:
