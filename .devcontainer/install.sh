@@ -22,6 +22,14 @@ sudo install -m 555 /tmp/argocd /usr/local/bin/argocd
 rm /tmp/argocd
 echo "✅ ArgoCD CLI installed"
 
+# ── Argo Rollouts kubectl plugin ───────────────────
+echo ""
+echo "🚀 Installing Argo Rollouts kubectl plugin..."
+curl -sSL -o /tmp/kubectl-argo-rollouts https://github.com/argoproj/argo-rollouts/releases/latest/download/kubectl-argo-rollouts-linux-amd64
+sudo install -m 555 /tmp/kubectl-argo-rollouts /usr/local/bin/kubectl-argo-rollouts
+rm /tmp/kubectl-argo-rollouts
+echo "✅ kubectl argo rollouts plugin installed"
+
 # ── k9s ───────────────────────────────────────────
 echo ""
 echo "🚀 Installing k9s..."
@@ -51,6 +59,7 @@ echo ""
 echo " Available commands:"
 echo "   kind      - create/manage local k8s clusters"
 echo "   kubectl   - interact with clusters"
+echo "   kubectl argo rollouts - inspect and manage Argo Rollouts"
 echo "   helm      - install helm charts"
 echo "   argocd    - ArgoCD CLI"
 echo "   k9s       - terminal UI for Kubernetes"

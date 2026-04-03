@@ -21,6 +21,17 @@ echo "Nodes:"
 kubectl get nodes
 echo ""
 
+# ── Ensure kubectl Argo Rollouts plugin exists ────
+if command -v kubectl-argo-rollouts >/dev/null 2>&1; then
+  echo "✅ kubectl argo rollouts plugin already installed"
+else
+  echo "🚀 Installing kubectl argo rollouts plugin..."
+  curl -sSL -o /tmp/kubectl-argo-rollouts https://github.com/argoproj/argo-rollouts/releases/latest/download/kubectl-argo-rollouts-linux-amd64
+  sudo install -m 555 /tmp/kubectl-argo-rollouts /usr/local/bin/kubectl-argo-rollouts
+  rm /tmp/kubectl-argo-rollouts
+  echo "✅ kubectl argo rollouts plugin installed"
+fi
+
 # ── Check if ArgoCD already installed ─────────────
 if kubectl get namespace argocd &>/dev/null; then
   echo "✅ ArgoCD namespace already exists, skipping install"
@@ -33,6 +44,18 @@ else
     --set configs.params."server\.insecure"=true \
     --wait
   echo "✅ ArgoCD installed"
+fi
+
+# ── Check if Argo Rollouts is already installed ───
+if kubectl get crd rollouts.argoproj.io &>/dev/null && \
+   kubectl get pods -n argo-rollouts &>/dev/null; then
+  echo "✅ Argo Rollouts already exists, skipping install"
+else
+  echo "🚀 Installing Argo Rollouts controller and CRDs..."
+  kubectl create namespace argo-rollouts --dry-run=client -o yaml | kubectl apply -f -
+  kubectl apply -n argo-rollouts -f https://github.com/argoproj/argo-rollouts/releases/latest/download/install.yaml
+  kubectl rollout status deployment/argo-rollouts -n argo-rollouts --timeout=180s
+  echo "✅ Argo Rollouts installed"
 fi
 
 # ── Start port-forward in background ──────────────
@@ -62,4 +85,8 @@ echo "   kubectl get secret argocd-initial-admin-secret \\"
 echo "   -n argocd -o jsonpath='{.data.password}' | base64 -d"
 echo ""
 echo " Username: admin"
+echo ""
+echo " Verify Argo Rollouts:"
+echo "   kubectl get crd rollouts.argoproj.io"
+echo "   kubectl get pods -n argo-rollouts"
 echo "================================================"
