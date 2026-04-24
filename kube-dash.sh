@@ -220,8 +220,8 @@ _draw_tabs() {
   printf '\e[48;5;233m%-*s\e[0m' "$TERM_COLS" ""
   _at 3 1
 
-  local tabs2=("c:ConfigMaps" "P:PVCs" "i:Ingresses" "J:Jobs" "W:CronJobs" "H:HPA")
-  local views2=("configmaps"  "pvcs"  "ingresses"   "jobs"  "cronjobs"   "hpa")
+  local tabs2=("10:ConfigMaps" "11:PVCs" "12:Ingresses" "13:Jobs" "14:CronJobs" "15:HPA")
+  local views2=("configmaps"   "pvcs"   "ingresses"    "jobs"   "cronjobs"    "hpa")
 
   printf '\e[48;5;233m '
   for i in "${!tabs2[@]}"; do
@@ -265,7 +265,7 @@ _draw_statusbar() {
       "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET" "$C_RED"  "$C_RESET" \
       "$C_CYAN" "$C_RESET"
   else
-    printf '%b[1-9]%b views  %b[c-W]%b more  %b[↑↓]%b nav  %b[Enter]%b detail  %b[l]%b logs  %b[v]%b prev-logs  %b[t]%b top  %b[f]%b fwd  %b[x]%b decode  %b[/]%b filter  %b[n]%b ns  %b[C]%b ctx  %b[?]%b help  %b[q]%b quit' \
+    printf '%b[1-9,0]%b views  %b[P/i/J/W/A]%b more  %b[↑↓]%b nav  %b[Enter]%b detail  %b[l]%b logs  %b[v]%b prev-logs  %b[t]%b top  %b[f]%b fwd  %b[x]%b decode  %b[/]%b filter  %b[n]%b ns  %b[C]%b ctx  %b[?]%b help  %b[q]%b quit' \
       "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET" \
       "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET" \
       "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET" \
@@ -547,19 +547,34 @@ _fetch_helm() {
 _fetch_configmaps() {
   local ns_flag
   [[ "$CURRENT_NS" == "all" ]] && ns_flag="-A" || ns_flag="-n $CURRENT_NS"
-  mapfile -t DATA_LINES < <(
-    kubectl get configmaps $ns_flag --no-headers \
-      -o custom-columns=\
+
+  if command -v python3 &>/dev/null; then
+    mapfile -t DATA_LINES < <(
+      kubectl get configmaps $ns_flag -o json 2>/dev/null \
+      | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+for cm in data.get('items', []):
+    ns   = cm.get('metadata', {}).get('namespace', '')
+    name = cm.get('metadata', {}).get('name', '')
+    keys = len(cm.get('data') or {}) + len(cm.get('binaryData') or {})
+    age  = cm.get('metadata', {}).get('creationTimestamp', '')[:10]
+    print('\t'.join([ns, name, str(keys), age]))
+" 2>/dev/null || true
+    )
+  else
+    # awk fallback — just get name/ns/age, count keys separately
+    mapfile -t DATA_LINES < <(
+      kubectl get configmaps $ns_flag --no-headers \
+        -o custom-columns=\
 'NAMESPACE:.metadata.namespace,'\
 'NAME:.metadata.name,'\
-'DATA:.data,'\
+'KEYS:.metadata.annotations.kubectl\.kubernetes\.io/last-applied-configuration,'\
 'AGE:.metadata.creationTimestamp' \
-      2>/dev/null \
-    | awk '{
-        n = split($3, a, ":"); keys=(n>1)?n-1:0
-        printf "%s\t%s\t%d\t%s\n",$1,$2,keys,$4
-      }'
-  )
+        2>/dev/null \
+      | awk '{printf "%s\t%s\t%s\t%s\n",$1,$2,0,$4}'
+    )
+  fi
 }
 
 _fetch_pvcs() {
@@ -2095,13 +2110,13 @@ _show_help() {
   _help_row "8"            "Services"
   _help_row "9"            "Helm Releases"
 
-  _help_section "Views — Row 2 (letters)"
-  _help_row "c"            "ConfigMaps"
-  _help_row "P"            "PersistentVolumeClaims"
-  _help_row "i"            "Ingresses"
-  _help_row "J"            "Jobs"
-  _help_row "W"            "CronJobs"
-  _help_row "A"            "HorizontalPodAutoscalers"
+  _help_section "Views — Row 2 (10-15)"
+  _help_row "0"            "10: ConfigMaps"
+  _help_row "P"            "11: PersistentVolumeClaims"
+  _help_row "i"            "12: Ingresses"
+  _help_row "J"            "13: Jobs"
+  _help_row "W"            "14: CronJobs"
+  _help_row "A"            "15: HorizontalPodAutoscalers"
 
   _help_section "General"
   _help_row "?"            "This help screen"
@@ -2419,8 +2434,8 @@ _main_loop() {
       8)   CURRENT_VIEW="services"; SELECTED_IDX=0; FILTER=""; LAST_REFRESH=0; DETAIL_MODE=false; _clear ;;
       9|h) CURRENT_VIEW="helm";     SELECTED_IDX=0; FILTER=""; LAST_REFRESH=0; DETAIL_MODE=false; _clear ;;
 
-      # ── View switching — row 2 (letter keys) ─────────────
-      c)   CURRENT_VIEW="configmaps"; SELECTED_IDX=0; FILTER=""; LAST_REFRESH=0; DETAIL_MODE=false; _clear ;;
+      # ── View switching — row 2 (10-15) ───────────────────
+      0)   CURRENT_VIEW="configmaps"; SELECTED_IDX=0; FILTER=""; LAST_REFRESH=0; DETAIL_MODE=false; _clear ;;
       P)   CURRENT_VIEW="pvcs";       SELECTED_IDX=0; FILTER=""; LAST_REFRESH=0; DETAIL_MODE=false; _clear ;;
       i)   CURRENT_VIEW="ingresses";  SELECTED_IDX=0; FILTER=""; LAST_REFRESH=0; DETAIL_MODE=false; _clear ;;
       J)   CURRENT_VIEW="jobs";       SELECTED_IDX=0; FILTER=""; LAST_REFRESH=0; DETAIL_MODE=false; _clear ;;
