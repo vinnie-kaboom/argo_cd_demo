@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 
-# ax — Argo CD Application Navigator
+# ax — Argo CD Application Navigator (No-Python Version)
 set -u
 
 # ── Config ──────────────────────────────────────────────────
-AX_VERSION="1.0.0"
+AX_VERSION="1.0.1"
 OLD_STTY=""
-# Argo CD usually lives in 'argocd' namespace
 ARGO_NS="${ARGO_NAMESPACE:-argocd}"
 
 # ── Colors ──────────────────────────────────────────────────
@@ -15,7 +14,7 @@ WHITE=$'\e[37m'; GRAY=$'\e[90m'; BG_SELECT=$'\e[48;5;236m'; RED=$'\e[31m'
 YELLOW=$'\e[33m'; BLUE=$'\e[34m'; MAGENTA=$'\e[35m'
 
 # ── Helpers ─────────────────────────────────────────────────
-die() { echo -e "${RED}✗ error:${RESET} $*" >&2; exit 1; }
+die() { echo -e "\n${RED}✗ error:${RESET} $*" >&2; exit 1; }
 ok() { echo -e "${GREEN}✓${RESET} $*"; }
 info() { echo -e "${CYAN}→${RESET} $*"; }
 
@@ -25,19 +24,8 @@ require kubectl
 # ── Argo Core Logic ─────────────────────────────────────────
 
 all_apps() {
-  # Returns: Name, Health Status, Sync Status, Destination Namespace
-  kubectl get applications.argoproj.io -n "$ARGO_NS" -o json 2>/dev/null | \
-  python3 -c "
-import json,sys
-try:
-    data=json.load(sys.stdin)
-    for r in data['items']:
-        name = r['metadata']['name']
-        health = r.get('status', {}).get('health', {}).get('status', 'Unknown')
-        sync = r.get('status', {}).get('sync', {}).get('status', 'Unknown')
-        dest = r.get('spec', {}).get('destination', {}).get('namespace', 'unknown')
-        print(f\"{name}\t{health}\t{sync}\t{dest}\")
-except Exception as e: pass"
+  # We try to use kubectl's built-in go-template to avoid python or jq dependencies
+  kubectl get applications.argoproj.io -n "$ARGO_NS" -o go-template='{{range .items}}{{.metadata.name}}{{"\t"}}{{.status.health.status}}{{"\t"}}{{.status.sync.status}}{{"\t"}}{{.spec.destination.namespace}}{{"\n"}}{{end}}' 2>/dev/null | grep -v '^$'
 }
 
 health_color() {
@@ -123,24 +111,23 @@ _picker() {
 # ── Subcommands ─────────────────────────────────────────────
 
 cmd_list() {
+  local apps
+  apps=$(all_apps)
+  if [[ -z "$apps" ]]; then
+     info "No applications found in namespace '$ARGO_NS'."
+     return
+  fi
+
   echo -e "\n  ${BOLD}${WHITE}Argo CD Applications${RESET} ${GRAY}(ns: $ARGO_NS)${RESET}"
   echo -e "  ${GRAY}──────────────────────────────────────────────────────────────────${RESET}"
   printf "  ${CYAN}%-25s %-12s %-12s %s${RESET}\n" "NAME" "HEALTH" "SYNC" "DEST-NS"
   
-  while IFS=$'\t' read -r name health sync dest; do
+  echo "$apps" | while IFS=$'\t' read -r name health sync dest; do
     local hc=$(health_color "$health")
     local sc=$(sync_color "$sync")
-    printf "  %-25s %b%-12s%b %b%-12s%b %s\n" "$name" "$hc" "$health" "$RESET" "$sc" "$sync" "$RESET" "$dest"
-  done < <(all_apps)
+    printf "  %-25s %b%-12s%b %b%-12s%b %s\n" "$name" "$hc" "${health:-Unknown}" "$RESET" "$sc" "${sync:-Unknown}" "$RESET" "${dest:-unknown}"
+  done
   echo ""
-}
-
-cmd_sync() {
-  local name="$1"
-  info "Patching App ${CYAN}$name${RESET} to initiate sync..."
-  # This tells Argo CD to sync via kubectl patch
-  kubectl patch application "$name" -n "$ARGO_NS" --type merge -p '{"spec":{"source":{"targetRevision":"HEAD"}}}' &>/dev/null
-  ok "Sync signaled for $name"
 }
 
 # ── Main ────────────────────────────────────────────────────
@@ -152,26 +139,24 @@ main() {
       cat <<EOF
   ${BOLD}${MAGENTA}ax${RESET} v${AX_VERSION}
   ax                Interactive App picker
-  ax <name>         Show App details (YAML)
+  ax <name>         Show App details
   ax --list | -l    List all Argo Apps
-  ax --sync         Trigger a manual sync
-  ax --delete       Remove an application
+  ax --sync         Trigger manual sync
 EOF
       ;;
     --list|-l) cmd_list ;;
-    --sync) [[ -z "${2:-}" ]] && die "Need app name"; cmd_sync "$2" ;;
-    --delete) [[ -z "${2:-}" ]] && die "Need app name"; kubectl delete application "$2" -n "$ARGO_NS" ;;
+    --sync) [[ -z "${2:-}" ]] && die "Need app name"; kubectl patch application "$2" -n "$ARGO_NS" --type merge -p '{"spec":{"source":{"targetRevision":"HEAD"}}}' ;;
     "")
-      local list=($(all_apps | awk '{print $1}'))
+      local list
+      list=($(all_apps | awk '{print $1}'))
       if [[ ${#list[@]} -eq 0 ]]; then
-        die "No Argo CD Applications found in namespace '$ARGO_NS'.\nTry: export ARGO_NAMESPACE=your-namespace"
+        die "No Argo CD Applications found in namespace '$ARGO_NS'.\nIf Argo lives elsewhere, try: export ARGO_NAMESPACE=custom-ns"
       fi
       _picker "${list[@]}"
       if [[ -f "/tmp/ax_choice" ]]; then
         local chosen=$(cat /tmp/ax_choice); rm -f "/tmp/ax_choice"
         clear
-        # Show a summary using describe
-        kubectl describe application "$chosen" -n "$ARGO_NS" | head -n 30
+        kubectl describe application "$chosen" -n "$ARGO_NS" | head -n 40
       fi
       ;;
     *)
