@@ -119,8 +119,8 @@ _at() { printf '\e[%d;%dH' "$1" "$2"; }
 # Clear from cursor to end of line
 _eol() { printf '\e[K'; }
 
-# Clear entire screen without flicker
-_clear() { printf '\e[2J'; }
+# Clear entire screen and home cursor
+_clear() { printf '\e[2J\e[H'; }
 
 # Draw a horizontal line
 _hline() {
@@ -255,6 +255,13 @@ _draw_statusbar() {
   TERM_COLS=$(tput cols 2>/dev/null || echo 120)
   TERM_ROWS=$(tput lines 2>/dev/null || echo 40)
 
+  # Separator line above footer
+  _at $(( TERM_ROWS - 1 )) 1
+  printf '\e[48;5;235m%-*s\e[0m' "$TERM_COLS" ""
+  _at $(( TERM_ROWS - 1 )) 1
+  printf '\e[38;5;240m%s\e[0m' "$(printf '%*s' "$TERM_COLS" '' | tr ' ' '-')"
+
+  # Footer key bar
   _at "$TERM_ROWS" 1
   printf '%b%-*s%b' "$BG_BAR" "$TERM_COLS" "" "$C_RESET"
   _at "$TERM_ROWS" 2
@@ -805,7 +812,7 @@ _render_deploys() {
   mapfile -t filtered < <(_filtered_lines)
 
   for line in "${filtered[@]}"; do
-    (( row > TERM_ROWS-1 )) && break
+    (( row > TERM_ROWS-3 )) && break
     IFS=$'\t' read -r ns name ready status replicas rollout age <<< "$line"
     local sc; sc=$(_status_color "$status")
 
@@ -845,7 +852,7 @@ _render_nodes() {
   mapfile -t filtered < <(_filtered_lines)
 
   for line in "${filtered[@]}"; do
-    (( row > TERM_ROWS-1 )) && break
+    (( row > TERM_ROWS-3 )) && break
     IFS=$'\t' read -r name status role version arch age <<< "$line"
     local sc; sc=$(_status_color "$status")
     local role_color="$C_CYAN"
@@ -894,7 +901,7 @@ _render_events() {
   done
 
   for line in "${rev_filtered[@]}"; do
-    (( row > TERM_ROWS-1 )) && break
+    (( row > TERM_ROWS-3 )) && break
     IFS=$'\t' read -r ns time type reason obj msg <<< "$line"
 
     local tc="$C_LGRAY"
@@ -924,7 +931,7 @@ _render_events() {
     printf '%bNo events found in namespace: %s%b' "$C_GRAY" "$CURRENT_NS" "$C_RESET"
   fi
 
-  _at $(( TERM_ROWS-1 )) 2
+  _at $(( TERM_ROWS-2 )) 2
   local warn_count=0
   local total_count=${#filtered[@]}
   for _evline in "${filtered[@]}"; do
@@ -963,7 +970,7 @@ _render_argocd() {
   fi
 
   for line in "${filtered[@]}"; do
-    (( row > TERM_ROWS-1 )) && break
+    (( row > TERM_ROWS-3 )) && break
     IFS=$'\t' read -r ns name sync health repo path target <<< "$line"
     local sc; sc=$(_status_color "$sync")
     local hc; hc=$(_status_color "$health")
@@ -1011,7 +1018,7 @@ _render_certs() {
   fi
 
   for line in "${filtered[@]}"; do
-    (( row > TERM_ROWS-1 )) && break
+    (( row > TERM_ROWS-3 )) && break
     IFS=$'\t' read -r ns name ready secret issuer expiry renew <<< "$line"
     local rc; rc=$(_status_color "$ready")
 
@@ -1061,7 +1068,7 @@ _render_secrets() {
   mapfile -t filtered < <(_filtered_lines)
 
   for line in "${filtered[@]}"; do
-    (( row > TERM_ROWS-1 )) && break
+    (( row > TERM_ROWS-3 )) && break
     IFS=$'\t' read -r ns name type keys age <<< "$line"
 
     # Color by secret type
@@ -1090,7 +1097,7 @@ _render_secrets() {
     printf '%bNo secrets found%b' "$C_GRAY" "$C_RESET"
   }
 
-  _at $(( TERM_ROWS-1 )) 2
+  _at $(( TERM_ROWS-2 )) 2
   printf '%b%d secrets%b' "$C_LGRAY" "${#filtered[@]}" "$C_RESET"
 }
 
@@ -1114,7 +1121,7 @@ _render_services() {
   mapfile -t filtered < <(_filtered_lines)
 
   for line in "${filtered[@]}"; do
-    (( row > TERM_ROWS-1 )) && break
+    (( row > TERM_ROWS-3 )) && break
     IFS=$'\t' read -r ns name type cip eip ports age <<< "$line"
 
     local tc="$C_WHITE"
@@ -1148,7 +1155,7 @@ _render_services() {
     printf '%bNo services found%b' "$C_GRAY" "$C_RESET"
   }
 
-  _at $(( TERM_ROWS-1 )) 2
+  _at $(( TERM_ROWS-2 )) 2
   printf '%b%d services%b' "$C_LGRAY" "${#filtered[@]}" "$C_RESET"
 }
 
@@ -1179,7 +1186,7 @@ _render_helm() {
   local deployed=0 failed=0
 
   for line in "${filtered[@]}"; do
-    (( row > TERM_ROWS-1 )) && break
+    (( row > TERM_ROWS-3 )) && break
     IFS=$'\t' read -r name ns rev status chart appver <<< "$line"
     [[ -z "$name" ]] && continue
 
@@ -1209,7 +1216,7 @@ _render_helm() {
     printf '%bNo Helm releases found%b' "$C_GRAY" "$C_RESET"
   }
 
-  _at $(( TERM_ROWS-1 )) 2
+  _at $(( TERM_ROWS-2 )) 2
   printf '%b%d releases%b  %bDeployed: %b%b%d%b  %bFailed: %b%b%d%b' \
     "$C_LGRAY" "${#filtered[@]}" "$C_RESET" \
     "$C_GRAY"  "$C_RESET" "$C_GREEN"  "$deployed" "$C_RESET" \
@@ -1233,7 +1240,7 @@ _render_configmaps() {
   local filtered=(); mapfile -t filtered < <(_filtered_lines)
 
   for line in "${filtered[@]}"; do
-    (( row > TERM_ROWS-1 )) && break
+    (( row > TERM_ROWS-3 )) && break
     IFS=$'\t' read -r ns name keys age <<< "$line"
     local kc="$C_LGRAY"; (( ${keys:-0} > 0 )) && kc="$C_WHITE"
     _at "$row" 1
@@ -1247,7 +1254,7 @@ _render_configmaps() {
     (( idx++ )); (( row++ ))
   done
   (( ${#filtered[@]} == 0 )) && { _at $(( start_row+4 )) $(( TERM_COLS/2-10 )); printf '%bNo configmaps found%b' "$C_GRAY" "$C_RESET"; }
-  _at $(( TERM_ROWS-1 )) 2
+  _at $(( TERM_ROWS-2 )) 2
   printf '%b%d configmaps%b' "$C_LGRAY" "${#filtered[@]}" "$C_RESET"
 }
 
@@ -1269,7 +1276,7 @@ _render_pvcs() {
   local filtered=(); mapfile -t filtered < <(_filtered_lines)
 
   for line in "${filtered[@]}"; do
-    (( row > TERM_ROWS-1 )) && break
+    (( row > TERM_ROWS-3 )) && break
     IFS=$'\t' read -r ns name status vol cap access sc age <<< "$line"
     local sc_color; sc_color=$(_status_color "$status")
     _at "$row" 1
@@ -1288,7 +1295,7 @@ _render_pvcs() {
   (( ${#filtered[@]} == 0 )) && { _at $(( start_row+4 )) $(( TERM_COLS/2-10 )); printf '%bNo PVCs found%b' "$C_GRAY" "$C_RESET"; }
   local pending=0
   for _l in "${filtered[@]}"; do [[ "$_l" == *"Pending"* ]] && (( pending++ )) || true; done
-  _at $(( TERM_ROWS-1 )) 2
+  _at $(( TERM_ROWS-2 )) 2
   printf '%b%d PVCs%b  %bPending: %b%b%d%b' \
     "$C_LGRAY" "${#filtered[@]}" "$C_RESET" \
     "$C_GRAY" "$C_RESET" "$C_YELLOW" "$pending" "$C_RESET"
@@ -1312,7 +1319,7 @@ _render_ingresses() {
   local filtered=(); mapfile -t filtered < <(_filtered_lines)
 
   for line in "${filtered[@]}"; do
-    (( row > TERM_ROWS-1 )) && break
+    (( row > TERM_ROWS-3 )) && break
     IFS=$'\t' read -r ns name class hosts addr ports age <<< "$line"
     local ac="$C_LGRAY"; [[ -n "$addr" && "$addr" != "<none>" ]] && ac="$C_GREEN"
     _at "$row" 1
@@ -1328,7 +1335,7 @@ _render_ingresses() {
     (( idx++ )); (( row++ ))
   done
   (( ${#filtered[@]} == 0 )) && { _at $(( start_row+4 )) $(( TERM_COLS/2-10 )); printf '%bNo ingresses found%b' "$C_GRAY" "$C_RESET"; }
-  _at $(( TERM_ROWS-1 )) 2
+  _at $(( TERM_ROWS-2 )) 2
   printf '%b%d ingresses%b' "$C_LGRAY" "${#filtered[@]}" "$C_RESET"
 }
 
@@ -1351,7 +1358,7 @@ _render_jobs() {
   local complete=0 failed=0
 
   for line in "${filtered[@]}"; do
-    (( row > TERM_ROWS-1 )) && break
+    (( row > TERM_ROWS-3 )) && break
     IFS=$'\t' read -r ns name comp status dur age <<< "$line"
     local sc="$C_YELLOW"
     [[ "$status" == "Complete" ]] && sc="$C_GREEN"  && (( complete++ ))
@@ -1369,7 +1376,7 @@ _render_jobs() {
     (( idx++ )); (( row++ ))
   done
   (( ${#filtered[@]} == 0 )) && { _at $(( start_row+4 )) $(( TERM_COLS/2-10 )); printf '%bNo jobs found%b' "$C_GRAY" "$C_RESET"; }
-  _at $(( TERM_ROWS-1 )) 2
+  _at $(( TERM_ROWS-2 )) 2
   printf '%b%d jobs%b  %bComplete: %b%b%d%b  %bFailed: %b%b%d%b' \
     "$C_LGRAY" "${#filtered[@]}" "$C_RESET" \
     "$C_GRAY" "$C_RESET" "$C_GREEN" "$complete" "$C_RESET" \
@@ -1394,7 +1401,7 @@ _render_cronjobs() {
   local filtered=(); mapfile -t filtered < <(_filtered_lines)
 
   for line in "${filtered[@]}"; do
-    (( row > TERM_ROWS-1 )) && break
+    (( row > TERM_ROWS-3 )) && break
     IFS=$'\t' read -r ns name sched susp active last age <<< "$line"
     local sc="$C_WHITE"; [[ "$susp" == "Yes" ]] && sc="$C_YELLOW"
     local ac="$C_LGRAY"; (( ${active:-0} > 0 )) && ac="$C_GREEN"
@@ -1412,7 +1419,7 @@ _render_cronjobs() {
     (( idx++ )); (( row++ ))
   done
   (( ${#filtered[@]} == 0 )) && { _at $(( start_row+4 )) $(( TERM_COLS/2-10 )); printf '%bNo cronjobs found%b' "$C_GRAY" "$C_RESET"; }
-  _at $(( TERM_ROWS-1 )) 2
+  _at $(( TERM_ROWS-2 )) 2
   printf '%b%d cronjobs%b' "$C_LGRAY" "${#filtered[@]}" "$C_RESET"
 }
 
@@ -1434,7 +1441,7 @@ _render_hpa() {
   local filtered=(); mapfile -t filtered < <(_filtered_lines)
 
   for line in "${filtered[@]}"; do
-    (( row > TERM_ROWS-1 )) && break
+    (( row > TERM_ROWS-3 )) && break
     IFS=$'\t' read -r ns name ref min max cur age <<< "$line"
     local cc="$C_WHITE"
     (( ${cur:-0} >= ${max:-0} && ${max:-0} > 0 )) && cc="$C_RED"
@@ -1453,7 +1460,7 @@ _render_hpa() {
     (( idx++ )); (( row++ ))
   done
   (( ${#filtered[@]} == 0 )) && { _at $(( start_row+4 )) $(( TERM_COLS/2-10 )); printf '%bNo HPAs found%b' "$C_GRAY" "$C_RESET"; }
-  _at $(( TERM_ROWS-1 )) 2
+  _at $(( TERM_ROWS-2 )) 2
   printf '%b%d HPAs%b' "$C_LGRAY" "${#filtered[@]}" "$C_RESET"
 }
 
@@ -2352,15 +2359,19 @@ _pager_text() {
 }
 
 _render_view() {
-  # Refresh data if needed
   local now
   now=$(date +%s)
-  if (( now - LAST_REFRESH >= REFRESH_INTERVAL )); then
-    _refresh_data
-  fi
 
-  # Always clear content area before drawing to prevent stacking
   _clear
+
+  if (( now - LAST_REFRESH >= REFRESH_INTERVAL )); then
+    _draw_header
+    _draw_tabs
+    _at 6 3
+    printf '%b  fetching %s...%b' "$C_GRAY" "$CURRENT_VIEW" "$C_RESET"
+    _refresh_data
+    _clear
+  fi
 
   _draw_header
   _draw_tabs
@@ -2389,8 +2400,6 @@ _render_view() {
 # ── Main input loop ────────────────────────────────────────
 
 _main_loop() {
-  _clear
-
   while true; do
     # Re-read terminal size on each frame
     TERM_ROWS=$(tput lines 2>/dev/null || echo 40)
