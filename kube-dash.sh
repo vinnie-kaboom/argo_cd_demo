@@ -195,58 +195,64 @@ _draw_header() {
 _draw_tabs() {
   TERM_COLS=$(tput cols 2>/dev/null || echo 120)
 
-  # Row 2 — first 9 views
   _at 2 1
   printf '\e[48;5;235m%-*s\e[0m' "$TERM_COLS" ""
   _at 2 1
 
-  local tabs1=("1:Pods" "2:Deploys" "3:Nodes" "4:Events" "5:ArgoCD" "6:Certs" "7:Secrets" "8:Services" "9:Helm")
-  local views1=("pods"  "deploys"   "nodes"   "events"   "argocd"   "certs"   "secrets"   "services"   "helm")
+  # View label map
+  local view_label
+  case "$CURRENT_VIEW" in
+    pods)       view_label="Pods"        ;;
+    deploys)    view_label="Deployments" ;;
+    nodes)      view_label="Nodes"       ;;
+    events)     view_label="Events"      ;;
+    argocd)     view_label="ArgoCD"      ;;
+    certs)      view_label="Certs"       ;;
+    secrets)    view_label="Secrets"     ;;
+    services)   view_label="Services"    ;;
+    helm)       view_label="Helm"        ;;
+    configmaps) view_label="ConfigMaps"  ;;
+    pvcs)       view_label="PVCs"        ;;
+    ingresses)  view_label="Ingresses"   ;;
+    jobs)       view_label="Jobs"        ;;
+    cronjobs)   view_label="CronJobs"    ;;
+    hpa)        view_label="HPA"         ;;
+    namespaces) view_label="Namespaces"  ;;
+    *)          view_label="$CURRENT_VIEW" ;;
+  esac
 
-  printf '\e[48;5;235m '
-  for i in "${!tabs1[@]}"; do
-    local tab="${tabs1[$i]}" view="${views1[$i]}"
-    if [[ "$view" == "$CURRENT_VIEW" ]]; then
-      printf '\e[0m\e[48;5;51m\e[38;5;232m\e[1m %s \e[0m\e[48;5;235m' "$tab"
-    else
-      printf '\e[38;5;248m %s \e[0m\e[48;5;235m' "$tab"
-    fi
-    printf '\e[38;5;240m|\e[0m\e[48;5;235m'
-  done
-  printf '\e[0m'
+  # Active view highlighted
+  printf '\e[48;5;235m \e[0m\e[48;5;51m\e[38;5;232m\e[1m %s \e[0m\e[48;5;235m' "$view_label"
+  printf '\e[38;5;240m|\e[0m\e[48;5;235m'
 
-  # Row 3 — next 6 views
-  _at 3 1
-  printf '\e[48;5;233m%-*s\e[0m' "$TERM_COLS" ""
-  _at 3 1
+  # Hint
+  printf '\e[38;5;240m press \e[38;5;51m:\e[38;5;240m to switch view\e[0m\e[48;5;235m'
 
-  local tabs2=("10:ConfigMaps" "11:PVCs" "12:Ingresses" "13:Jobs" "14:CronJobs" "15:HPA")
-  local views2=("configmaps"   "pvcs"   "ingresses"    "jobs"   "cronjobs"    "hpa")
-
-  printf '\e[48;5;233m '
-  for i in "${!tabs2[@]}"; do
-    local tab="${tabs2[$i]}" view="${views2[$i]}"
-    if [[ "$view" == "$CURRENT_VIEW" ]]; then
-      printf '\e[0m\e[48;5;51m\e[38;5;232m\e[1m %s \e[0m\e[48;5;233m' "$tab"
-    else
-      printf '\e[38;5;244m %s \e[0m\e[48;5;233m' "$tab"
-    fi
-    printf '\e[38;5;238m|\e[0m\e[48;5;233m'
-  done
-  printf '\e[0m'
-
-  # Filter indicator on row 2
+  # Filter indicator
   if [[ -n "$FILTER" ]]; then
-    _at 2 $(( TERM_COLS - 20 ))
-    printf ' \e[38;5;220m/%s\e[0m' "$FILTER"
+    printf '  \e[38;5;220m/%s\e[0m\e[48;5;235m' "$FILTER"
   fi
 
-  # Refresh countdown
-  local now elapsed next
-  now=$(date +%s); elapsed=$(( now - LAST_REFRESH ))
-  next=$(( REFRESH_INTERVAL - elapsed )); (( next < 0 )) && next=0
-  _at 3 $(( TERM_COLS - 12 ))
-  printf '\e[48;5;233m\e[38;5;240m refresh %-2ds\e[0m' "$next"
+  # Staleness indicator — show how old the data is
+  local now elapsed stale_str stale_color
+  now=$(date +%s)
+  elapsed=$(( now - LAST_REFRESH ))
+  if (( LAST_REFRESH == 0 )); then
+    stale_str=" no data yet"
+    stale_color='\e[38;5;196m'
+  elif (( elapsed < 60 )); then
+    stale_str=" updated ${elapsed}s ago"
+    stale_color='\e[38;5;240m'
+  elif (( elapsed < 300 )); then
+    stale_str=" updated $((elapsed/60))m ago"
+    stale_color='\e[38;5;220m'
+  else
+    stale_str=" stale $((elapsed/60))m"
+    stale_color='\e[38;5;196m'
+  fi
+  local stale_len=${#stale_str}
+  _at 2 $(( TERM_COLS - stale_len ))
+  printf '\e[48;5;235m%b%s\e[0m' "$stale_color" "$stale_str"
 }
 
 # ── Status bar ─────────────────────────────────────────────
@@ -266,18 +272,60 @@ _draw_statusbar() {
   printf '%b%-*s%b' "$BG_BAR" "$TERM_COLS" "" "$C_RESET"
   _at "$TERM_ROWS" 2
 
+  # Helper to print a key hint
+  local k="$C_CYAN" r="$C_RESET"
+
   if $DETAIL_MODE; then
-    printf '%b[q]%b back  %b[↑↓/jk]%b scroll  %b[l]%b logs  %b[e]%b exec  %b[r]%b restart  %b[D]%b delete  %b[?]%b help' \
-      "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET" \
-      "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET" "$C_RED"  "$C_RESET" \
-      "$C_CYAN" "$C_RESET"
+    # Inside describe pager
+    printf '%b[q]%b back  %b[↑↓/j/k]%b scroll  %b[g/G]%b top/bottom  %b[l]%b logs  %b[e]%b exec  %b[r]%b restart' \
+      "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
   else
-    printf '%b[1-9,0]%b views  %b[P/i/J/W/A]%b more  %b[↑↓]%b nav  %b[Enter]%b detail  %b[l]%b logs  %b[v]%b prev-logs  %b[t]%b top  %b[f]%b fwd  %b[x]%b decode  %b[/]%b filter  %b[n]%b ns  %b[C]%b ctx  %b[?]%b help  %b[q]%b quit' \
-      "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET" \
-      "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET" \
-      "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET" \
-      "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET" \
-      "$C_CYAN" "$C_RESET"
+    # Always shown
+    local always="%b[:]%b view  %b[↑↓/j/k]%b nav  %b[Enter]%b describe  %b[/]%b filter  %b[n]%b ns  %b[C]%b ctx  %b[R]%b refresh  %b[?]%b help  %b[q]%b quit"
+    local always_args=("$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r")
+
+    # View-specific extras shown before the always block
+    local extras=""
+    local extra_args=()
+
+    case "$CURRENT_VIEW" in
+      pods)
+        extras="%b[l]%b logs  %b[e]%b exec  %b[v]%b prev-logs  %b[t]%b top  %b[f]%b fwd  %b[r]%b restart  %b[D]%b delete  "
+        extra_args=("$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$C_RED" "$r")
+        ;;
+      deploys)
+        extras="%b[r]%b restart  %b[D]%b delete  "
+        extra_args=("$k" "$r" "$C_RED" "$r")
+        ;;
+      nodes)
+        extras="%b[t]%b top  "
+        extra_args=("$k" "$r")
+        ;;
+      secrets)
+        extras="%b[x]%b decode  %b[D]%b delete  "
+        extra_args=("$k" "$r" "$C_RED" "$r")
+        ;;
+      services)
+        extras="%b[f]%b fwd  %b[D]%b delete  "
+        extra_args=("$k" "$r" "$C_RED" "$r")
+        ;;
+      namespaces)
+        extras="%b[Enter]%b scope+pods  "
+        extra_args=("$k" "$r")
+        ;;
+      configmaps|pvcs|ingresses|jobs|cronjobs|hpa|argocd|certs|helm)
+        extras="%b[D]%b delete  "
+        extra_args=("$C_RED" "$r")
+        ;;
+    esac
+
+    # Print extras first, then always
+    if [[ -n "$extras" ]]; then
+      # shellcheck disable=SC2059
+      printf "$extras" "${extra_args[@]}"
+    fi
+    # shellcheck disable=SC2059
+    printf "$always" "${always_args[@]}"
   fi
 }
 
@@ -381,16 +429,16 @@ _fetch_nodes() {
       -o custom-columns=\
 'NAME:.metadata.name,'\
 'STATUS:.status.conditions[-1].type,'\
-'ROLES:.metadata.labels.node-role\.kubernetes\.io/control-plane,'\
+'ROLE:.metadata.labels.node-role\.kubernetes\.io/control-plane,'\
 'VERSION:.status.nodeInfo.kubeletVersion,'\
-'OS:.status.nodeInfo.osImage,'\
+'OS:.status.nodeInfo.operatingSystem,'\
 'ARCH:.status.nodeInfo.architecture,'\
 'AGE:.metadata.creationTimestamp' \
       2>/dev/null \
     | awk '{
         role=$3; if (role=="<none>"||role=="") role="worker"
         else role="control-plane"
-        printf "%s\t%s\t%s\t%s\t%s\t%s\n", $1,$2,role,$4,$6,$7
+        printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", $1,$2,role,$4,$5,$6,$7
       }'
   )
 }
@@ -686,6 +734,21 @@ _fetch_hpa() {
   )
 }
 
+_fetch_namespaces() {
+  mapfile -t DATA_LINES < <(
+    # Always include "all" as the first option
+    echo -e "all\t(all namespaces)\t-"
+    kubectl get namespaces \
+      --no-headers \
+      -o custom-columns=\
+'NAME:.metadata.name,'\
+'STATUS:.status.phase,'\
+'AGE:.metadata.creationTimestamp' \
+      2>/dev/null \
+    | awk '{printf "%s\t%s\t%s\n",$1,$2,$3}'
+  )
+}
+
 _refresh_data() {
   case "$CURRENT_VIEW" in
     pods)       _fetch_pods       ;;
@@ -703,8 +766,10 @@ _refresh_data() {
     jobs)       _fetch_jobs       ;;
     cronjobs)   _fetch_cronjobs   ;;
     hpa)        _fetch_hpa        ;;
+    namespaces) _fetch_namespaces ;;
   esac
   LAST_REFRESH=$(date +%s)
+  VIEW_LOADED["${CURRENT_VIEW}:${CURRENT_NS}"]=1
   local count=${#DATA_LINES[@]}
   (( SELECTED_IDX >= count && count > 0 )) && SELECTED_IDX=$(( count - 1 ))
 }
@@ -722,7 +787,7 @@ _filtered_lines() {
 # ── View renderers ─────────────────────────────────────────
 
 _render_pods() {
-  local start_row=5
+  local start_row=4
   local max_rows=$(( TERM_ROWS - start_row - 1 ))
   TERM_COLS=$(tput cols 2>/dev/null || echo 120)
 
@@ -745,7 +810,7 @@ _render_pods() {
   mapfile -t filtered < <(_filtered_lines)
 
   for line in "${filtered[@]}"; do
-    (( row > TERM_ROWS - 1 )) && break
+    (( row > TERM_ROWS - 4 )) && break
 
     IFS=$'\t' read -r ns name ready status restarts age node <<< "$line"
 
@@ -784,15 +849,15 @@ _render_pods() {
   fi
 
   # Summary line
-  _at $(( TERM_ROWS - 1 )) 2
+  _at $(( TERM_ROWS - 2 )) 2
   local total=${#filtered[@]}
-  local running
-  running=$(printf '%s\n' "${filtered[@]}" | grep -c "Running" 2>/dev/null || echo 0)
+  local running=0
+  for _l in "${filtered[@]}"; do [[ "$_l" == *"Running"* ]] && (( running++ )) || true; done
   printf '%b%d pods%b  %bRunning: %d%b' "$C_LGRAY" "$total" "$C_RESET" "$C_GREEN" "$running" "$C_RESET"
 }
 
 _render_deploys() {
-  local start_row=5
+  local start_row=4
   TERM_COLS=$(tput cols 2>/dev/null || echo 120)
 
   local w_ns=14 w_name=36 w_ready=10 w_status=12 w_age=10
@@ -812,7 +877,7 @@ _render_deploys() {
   mapfile -t filtered < <(_filtered_lines)
 
   for line in "${filtered[@]}"; do
-    (( row > TERM_ROWS-3 )) && break
+    (( row > TERM_ROWS - 4 )) && break
     IFS=$'\t' read -r ns name ready status replicas rollout age <<< "$line"
     local sc; sc=$(_status_color "$status")
 
@@ -832,7 +897,7 @@ _render_deploys() {
 }
 
 _render_nodes() {
-  local start_row=5
+  local start_row=4
   TERM_COLS=$(tput cols 2>/dev/null || echo 120)
 
   local w_name=30 w_status=10 w_role=14 w_ver=16 w_arch=8 w_age=10
@@ -852,7 +917,7 @@ _render_nodes() {
   mapfile -t filtered < <(_filtered_lines)
 
   for line in "${filtered[@]}"; do
-    (( row > TERM_ROWS-3 )) && break
+    (( row > TERM_ROWS - 4 )) && break
     IFS=$'\t' read -r name status role version arch age <<< "$line"
     local sc; sc=$(_status_color "$status")
     local role_color="$C_CYAN"
@@ -875,7 +940,7 @@ _render_nodes() {
 }
 
 _render_events() {
-  local start_row=5
+  local start_row=4
   TERM_COLS=$(tput cols 2>/dev/null || echo 120)
 
   local w_ns=12 w_time=20 w_type=8 w_reason=20 w_obj=28
@@ -901,7 +966,7 @@ _render_events() {
   done
 
   for line in "${rev_filtered[@]}"; do
-    (( row > TERM_ROWS-3 )) && break
+    (( row > TERM_ROWS - 4 )) && break
     IFS=$'\t' read -r ns time type reason obj msg <<< "$line"
 
     local tc="$C_LGRAY"
@@ -943,7 +1008,7 @@ _render_events() {
 }
 
 _render_argocd() {
-  local start_row=5
+  local start_row=4
   TERM_COLS=$(tput cols 2>/dev/null || echo 120)
 
   local w_ns=14 w_name=28 w_sync=12 w_health=12 w_target=16 w_path=20
@@ -970,7 +1035,7 @@ _render_argocd() {
   fi
 
   for line in "${filtered[@]}"; do
-    (( row > TERM_ROWS-3 )) && break
+    (( row > TERM_ROWS - 4 )) && break
     IFS=$'\t' read -r ns name sync health repo path target <<< "$line"
     local sc; sc=$(_status_color "$sync")
     local hc; hc=$(_status_color "$health")
@@ -992,7 +1057,7 @@ _render_argocd() {
 }
 
 _render_certs() {
-  local start_row=5
+  local start_row=4
   TERM_COLS=$(tput cols 2>/dev/null || echo 120)
 
   local w_ns=14 w_name=28 w_ready=7 w_secret=24 w_issuer=20 w_expiry=22
@@ -1018,7 +1083,7 @@ _render_certs() {
   fi
 
   for line in "${filtered[@]}"; do
-    (( row > TERM_ROWS-3 )) && break
+    (( row > TERM_ROWS - 4 )) && break
     IFS=$'\t' read -r ns name ready secret issuer expiry renew <<< "$line"
     local rc; rc=$(_status_color "$ready")
 
@@ -1050,7 +1115,7 @@ _render_certs() {
 }
 
 _render_secrets() {
-  local start_row=5
+  local start_row=4
   TERM_COLS=$(tput cols 2>/dev/null || echo 120)
   local w_ns=16 w_name=40 w_type=32 w_keys=6 w_age=12
 
@@ -1068,7 +1133,7 @@ _render_secrets() {
   mapfile -t filtered < <(_filtered_lines)
 
   for line in "${filtered[@]}"; do
-    (( row > TERM_ROWS-3 )) && break
+    (( row > TERM_ROWS - 4 )) && break
     IFS=$'\t' read -r ns name type keys age <<< "$line"
 
     # Color by secret type
@@ -1102,7 +1167,7 @@ _render_secrets() {
 }
 
 _render_services() {
-  local start_row=5
+  local start_row=4
   TERM_COLS=$(tput cols 2>/dev/null || echo 120)
   local w_ns=16 w_name=36 w_type=12 w_cip=16 w_eip=16 w_ports=18 w_age=10
 
@@ -1121,7 +1186,7 @@ _render_services() {
   mapfile -t filtered < <(_filtered_lines)
 
   for line in "${filtered[@]}"; do
-    (( row > TERM_ROWS-3 )) && break
+    (( row > TERM_ROWS - 4 )) && break
     IFS=$'\t' read -r ns name type cip eip ports age <<< "$line"
 
     local tc="$C_WHITE"
@@ -1160,7 +1225,7 @@ _render_services() {
 }
 
 _render_helm() {
-  local start_row=5
+  local start_row=4
   TERM_COLS=$(tput cols 2>/dev/null || echo 120)
   local w_name=28 w_ns=16 w_rev=5 w_status=12 w_chart=28 w_appver=12
 
@@ -1186,7 +1251,7 @@ _render_helm() {
   local deployed=0 failed=0
 
   for line in "${filtered[@]}"; do
-    (( row > TERM_ROWS-3 )) && break
+    (( row > TERM_ROWS - 4 )) && break
     IFS=$'\t' read -r name ns rev status chart appver <<< "$line"
     [[ -z "$name" ]] && continue
 
@@ -1224,7 +1289,7 @@ _render_helm() {
 }
 
 _render_configmaps() {
-  local start_row=5
+  local start_row=4
   TERM_COLS=$(tput cols 2>/dev/null || echo 120)
   local w_ns=16 w_name=48 w_keys=6 w_age=12
 
@@ -1240,7 +1305,7 @@ _render_configmaps() {
   local filtered=(); mapfile -t filtered < <(_filtered_lines)
 
   for line in "${filtered[@]}"; do
-    (( row > TERM_ROWS-3 )) && break
+    (( row > TERM_ROWS - 4 )) && break
     IFS=$'\t' read -r ns name keys age <<< "$line"
     local kc="$C_LGRAY"; (( ${keys:-0} > 0 )) && kc="$C_WHITE"
     _at "$row" 1
@@ -1259,7 +1324,7 @@ _render_configmaps() {
 }
 
 _render_pvcs() {
-  local start_row=5
+  local start_row=4
   TERM_COLS=$(tput cols 2>/dev/null || echo 120)
   local w_ns=14 w_name=30 w_status=10 w_vol=28 w_cap=8 w_sc=16 w_age=10
 
@@ -1276,7 +1341,7 @@ _render_pvcs() {
   local filtered=(); mapfile -t filtered < <(_filtered_lines)
 
   for line in "${filtered[@]}"; do
-    (( row > TERM_ROWS-3 )) && break
+    (( row > TERM_ROWS - 4 )) && break
     IFS=$'\t' read -r ns name status vol cap access sc age <<< "$line"
     local sc_color; sc_color=$(_status_color "$status")
     _at "$row" 1
@@ -1302,7 +1367,7 @@ _render_pvcs() {
 }
 
 _render_ingresses() {
-  local start_row=5
+  local start_row=4
   TERM_COLS=$(tput cols 2>/dev/null || echo 120)
   local w_ns=14 w_name=28 w_class=12 w_hosts=30 w_addr=16 w_age=10
 
@@ -1319,7 +1384,7 @@ _render_ingresses() {
   local filtered=(); mapfile -t filtered < <(_filtered_lines)
 
   for line in "${filtered[@]}"; do
-    (( row > TERM_ROWS-3 )) && break
+    (( row > TERM_ROWS - 4 )) && break
     IFS=$'\t' read -r ns name class hosts addr ports age <<< "$line"
     local ac="$C_LGRAY"; [[ -n "$addr" && "$addr" != "<none>" ]] && ac="$C_GREEN"
     _at "$row" 1
@@ -1340,7 +1405,7 @@ _render_ingresses() {
 }
 
 _render_jobs() {
-  local start_row=5
+  local start_row=4
   TERM_COLS=$(tput cols 2>/dev/null || echo 120)
   local w_ns=14 w_name=36 w_comp=12 w_status=10 w_dur=24 w_age=10
 
@@ -1358,7 +1423,7 @@ _render_jobs() {
   local complete=0 failed=0
 
   for line in "${filtered[@]}"; do
-    (( row > TERM_ROWS-3 )) && break
+    (( row > TERM_ROWS - 4 )) && break
     IFS=$'\t' read -r ns name comp status dur age <<< "$line"
     local sc="$C_YELLOW"
     [[ "$status" == "Complete" ]] && sc="$C_GREEN"  && (( complete++ ))
@@ -1384,7 +1449,7 @@ _render_jobs() {
 }
 
 _render_cronjobs() {
-  local start_row=5
+  local start_row=4
   TERM_COLS=$(tput cols 2>/dev/null || echo 120)
   local w_ns=14 w_name=32 w_sched=18 w_susp=8 w_active=8 w_last=22 w_age=10
 
@@ -1401,7 +1466,7 @@ _render_cronjobs() {
   local filtered=(); mapfile -t filtered < <(_filtered_lines)
 
   for line in "${filtered[@]}"; do
-    (( row > TERM_ROWS-3 )) && break
+    (( row > TERM_ROWS - 4 )) && break
     IFS=$'\t' read -r ns name sched susp active last age <<< "$line"
     local sc="$C_WHITE"; [[ "$susp" == "Yes" ]] && sc="$C_YELLOW"
     local ac="$C_LGRAY"; (( ${active:-0} > 0 )) && ac="$C_GREEN"
@@ -1424,7 +1489,7 @@ _render_cronjobs() {
 }
 
 _render_hpa() {
-  local start_row=5
+  local start_row=4
   TERM_COLS=$(tput cols 2>/dev/null || echo 120)
   local w_ns=14 w_name=32 w_ref=24 w_min=6 w_max=6 w_cur=8 w_age=10
 
@@ -1441,7 +1506,7 @@ _render_hpa() {
   local filtered=(); mapfile -t filtered < <(_filtered_lines)
 
   for line in "${filtered[@]}"; do
-    (( row > TERM_ROWS-3 )) && break
+    (( row > TERM_ROWS - 4 )) && break
     IFS=$'\t' read -r ns name ref min max cur age <<< "$line"
     local cc="$C_WHITE"
     (( ${cur:-0} >= ${max:-0} && ${max:-0} > 0 )) && cc="$C_RED"
@@ -1464,7 +1529,54 @@ _render_hpa() {
   printf '%b%d HPAs%b' "$C_LGRAY" "${#filtered[@]}" "$C_RESET"
 }
 
-# ── kubectl top ────────────────────────────────────────────
+_render_namespaces() {
+  local start_row=4
+  TERM_COLS=$(tput cols 2>/dev/null || echo 120)
+  local w_name=24 w_status=22 w_age=12
+
+  _at $start_row 1
+  printf '%b%b %-*s %-*s %-*s  %s%b' \
+    "$C_BOLD" "$C_DCYAN" \
+    "$w_name" "NAME" "$w_status" "STATUS" "$w_age" "AGE" \
+    "[Enter] scope all views to namespace" \
+    "$C_RESET"
+  _eol
+  _hline $(( start_row+1 )) 1 "$TERM_COLS" "-" "$C_GRAY"
+
+  local row=$(( start_row+2 )) idx=0
+  local filtered=(); mapfile -t filtered < <(_filtered_lines)
+
+  for line in "${filtered[@]}"; do
+    (( row > TERM_ROWS - 4 )) && break
+    IFS=$'\t' read -r name status age <<< "$line"
+    local sc; sc=$(_status_color "$status")
+
+    # Mark active namespace with green bullet
+    local nc="$C_WHITE"
+    local bullet="  "
+    if [[ "$name" == "$CURRENT_NS" ]]; then
+      nc="$C_GREEN"; bullet="${C_GREEN}● ${C_RESET}"
+    fi
+
+    _at "$row" 1
+    (( idx == SELECTED_IDX )) && printf '%b' "$BG_SEL"
+    printf ' %b%b%-*s%b %b%-*s%b %-*s' \
+      "$bullet" "$nc"      "$w_name"   "${name:0:$w_name}" \
+      "$C_RESET" "$sc"     "$w_status" "${status:0:$w_status}" \
+      "$C_RESET"           "$w_age"    "${age:0:$w_age}"
+    printf '%b'; _eol
+    (( idx++ )); (( row++ ))
+  done
+
+  (( ${#filtered[@]} == 0 )) && {
+    _at $(( start_row+4 )) $(( TERM_COLS/2-10 ))
+    printf '%bNo namespaces found%b' "$C_GRAY" "$C_RESET"
+  }
+  _at $(( TERM_ROWS-2 )) 2
+  printf '%b%d namespaces%b  %bActive: %b%b%s%b' \
+    "$C_LGRAY" "${#filtered[@]}" "$C_RESET" \
+    "$C_GRAY" "$C_RESET" "$C_GREEN" "$CURRENT_NS" "$C_RESET"
+}
 
 _show_top() {
   local target="${1:-pods}"   # pods or nodes
@@ -1641,18 +1753,37 @@ _show_detail() {
       "$BG_HDR" "$C_CYAN" "$C_WHITE" "$resource" "$name" "$C_RESET"
     _eol
 
-    # Key bar
+    # Key bar — show only relevant actions for resource type
     _at 2 1
-    printf '%b%b[q]%b back  %b[↑↓/j/k]%b scroll  %b[g]%b top  %b[G]%b bottom  %b[l]%b logs  %b[e]%b exec  %b[r]%b restart%b' \
-      "$BG_BAR" \
-      "$C_CYAN" "$C_RESET$BG_BAR" \
-      "$C_CYAN" "$C_RESET$BG_BAR" \
-      "$C_CYAN" "$C_RESET$BG_BAR" \
-      "$C_CYAN" "$C_RESET$BG_BAR" \
-      "$C_CYAN" "$C_RESET$BG_BAR" \
-      "$C_CYAN" "$C_RESET$BG_BAR" \
-      "$C_CYAN" "$C_RESET$BG_BAR" \
-      "$C_RESET"
+    if [[ "$resource" == "pods" || "$resource" == "pod" ]]; then
+      printf '%b%b[q]%b back  %b[↑↓/j/k]%b scroll  %b[g]%b top  %b[G]%b bottom  %b[l]%b logs  %b[e]%b exec  %b[r]%b restart%b' \
+        "$BG_BAR" \
+        "$C_CYAN" "$C_RESET$BG_BAR" \
+        "$C_CYAN" "$C_RESET$BG_BAR" \
+        "$C_CYAN" "$C_RESET$BG_BAR" \
+        "$C_CYAN" "$C_RESET$BG_BAR" \
+        "$C_CYAN" "$C_RESET$BG_BAR" \
+        "$C_CYAN" "$C_RESET$BG_BAR" \
+        "$C_CYAN" "$C_RESET$BG_BAR" \
+        "$C_RESET"
+    elif [[ "$resource" == "deployment" ]]; then
+      printf '%b%b[q]%b back  %b[↑↓/j/k]%b scroll  %b[g]%b top  %b[G]%b bottom  %b[r]%b restart%b' \
+        "$BG_BAR" \
+        "$C_CYAN" "$C_RESET$BG_BAR" \
+        "$C_CYAN" "$C_RESET$BG_BAR" \
+        "$C_CYAN" "$C_RESET$BG_BAR" \
+        "$C_CYAN" "$C_RESET$BG_BAR" \
+        "$C_CYAN" "$C_RESET$BG_BAR" \
+        "$C_RESET"
+    else
+      printf '%b%b[q]%b back  %b[↑↓/j/k]%b scroll  %b[g]%b top  %b[G]%b bottom%b' \
+        "$BG_BAR" \
+        "$C_CYAN" "$C_RESET$BG_BAR" \
+        "$C_CYAN" "$C_RESET$BG_BAR" \
+        "$C_CYAN" "$C_RESET$BG_BAR" \
+        "$C_CYAN" "$C_RESET$BG_BAR" \
+        "$C_RESET"
+    fi
     _eol
 
     # Content
@@ -1998,7 +2129,16 @@ _pick_namespace() {
         ;;
       k) (( idx > 0 )) && (( idx-- )) ;;
       j) (( idx < count-1 )) && (( idx++ )) ;;
-      '') CURRENT_NS="${namespaces[$idx]}"; SELECTED_IDX=0; LAST_REFRESH=0; return ;;
+      '')
+        local new_ns="${namespaces[$idx]}"
+        if [[ "$new_ns" != "$CURRENT_NS" ]]; then
+          CURRENT_NS="$new_ns"
+          # Invalidate all view caches — data is now stale for new namespace
+          VIEW_LOADED=()
+          LAST_REFRESH=0
+        fi
+        SELECTED_IDX=0
+        return ;;
       q|Q) return ;;
     esac
   done
@@ -2046,8 +2186,9 @@ _pick_context() {
       '')
         kubectl config use-context "${contexts[$idx]}" &>/dev/null
         CURRENT_CTX="${contexts[$idx]}"
-        CURRENT_NS="default"
+        CURRENT_NS="all"
         SELECTED_IDX=0
+        VIEW_LOADED=()
         LAST_REFRESH=0
         return
         ;;
@@ -2117,13 +2258,24 @@ _show_help() {
   _help_row "8"            "Services"
   _help_row "9"            "Helm Releases"
 
-  _help_section "Views — Row 2 (10-15)"
-  _help_row "0"            "10: ConfigMaps"
-  _help_row "P"            "11: PersistentVolumeClaims"
-  _help_row "i"            "12: Ingresses"
-  _help_row "J"            "13: Jobs"
-  _help_row "W"            "14: CronJobs"
-  _help_row "A"            "15: HorizontalPodAutoscalers"
+  _help_section "Views — Row 2 (: command palette)"
+  _help_row ":"              "Open command palette"
+  _help_row "po / pod"       "Pods"
+  _help_row "dep / deploy"   "Deployments"
+  _help_row "no / node"      "Nodes"
+  _help_row "ev / event"     "Events"
+  _help_row "app"            "ArgoCD Applications"
+  _help_row "cert"           "Certificates"
+  _help_row "sec / secret"   "Secrets"
+  _help_row "svc / service"  "Services"
+  _help_row "helm / hr"      "Helm Releases"
+  _help_row "cm / configmap" "ConfigMaps"
+  _help_row "pvc"            "PVCs"
+  _help_row "ing / ingress"  "Ingresses"
+  _help_row "ns / namespace" "Namespaces"
+  _help_row "job"            "Jobs"
+  _help_row "cj / cronjob"   "CronJobs"
+  _help_row "hpa"            "HPA"
 
   _help_section "General"
   _help_row "?"            "This help screen"
@@ -2136,6 +2288,172 @@ _show_help() {
   _drain_input
   read -rsn1
   _drain_input
+}
+
+# ── Command palette (:) ────────────────────────────────────
+# Type an alias and jump to that view — just like k9s
+
+# Track which views have been loaded at least once
+declare -A VIEW_LOADED=()
+
+# Switch to a view — fetch on first visit, use cache on revisit
+_switch_view() {
+  local view="$1"
+  local prev_view="$CURRENT_VIEW"
+  CURRENT_VIEW="$view"
+  SELECTED_IDX=0
+  FILTER=""
+  DETAIL_MODE=false
+  # Only trigger a fetch if this view has never been loaded,
+  # or if the namespace changed since last load
+  local load_key="${view}:${CURRENT_NS}"
+  if [[ -z "${VIEW_LOADED[$load_key]:-}" ]]; then
+    LAST_REFRESH=0
+    VIEW_LOADED[$load_key]=1
+  fi
+}
+declare -A KX_ALIASES=(
+  [po]="pods"         [pod]="pods"         [pods]="pods"
+  [dep]="deploys"     [deploy]="deploys"   [deploys]="deploys"   [deployment]="deploys"
+  [no]="nodes"        [node]="nodes"       [nodes]="nodes"
+  [ev]="events"       [event]="events"     [events]="events"
+  [app]="argocd"      [apps]="argocd"      [argocd]="argocd"
+  [cert]="certs"      [certs]="certs"      [certificate]="certs"
+  [sec]="secrets"     [secret]="secrets"   [secrets]="secrets"
+  [svc]="services"    [service]="services" [services]="services"
+  [helm]="helm"       [hr]="helm"
+  [cm]="configmaps"   [configmap]="configmaps" [configmaps]="configmaps"
+  [pvc]="pvcs"        [pvcs]="pvcs"
+  [ing]="ingresses"   [ingress]="ingresses" [ingresses]="ingresses"
+  [job]="jobs"        [jobs]="jobs"
+  [cj]="cronjobs"     [cronjob]="cronjobs" [cronjobs]="cronjobs"
+  [ns]="namespaces"   [namespace]="namespaces" [namespaces]="namespaces"
+  [hpa]="hpa"         [autoscaler]="hpa"
+)
+
+# Display order for the palette list
+KX_ALIAS_DISPLAY=(po dep no ev app cert sec svc helm cm pvc ing job cj hpa ns)
+
+# ── Command palette ────────────────────────────────────────
+_command_palette() {
+  TERM_ROWS=$(tput lines 2>/dev/null || echo 40)
+  TERM_COLS=$(tput cols  2>/dev/null || echo 120)
+
+  local box_w=52 box_h=22
+  local box_r=$(( TERM_ROWS/2 - box_h/2 ))
+  local box_c=$(( TERM_COLS/2 - box_w/2 ))
+  local input=""
+
+  _draw_palette() {
+    local inp="$1"
+    local r
+
+    # Draw box background
+    for (( r=box_r; r<box_r+box_h; r++ )); do
+      _at "$r" "$box_c"
+      printf '\e[48;5;234m%-*s\e[0m' "$box_w" ""
+    done
+
+    # Title
+    _at "$box_r" "$box_c"
+    printf '\e[48;5;24m\e[38;5;255m\e[1m %-*s\e[0m' $(( box_w-1 )) " kube-dash › switch view"
+
+    # Input line
+    _at $(( box_r+1 )) "$box_c"
+    local cursor_pad=$(( box_w - ${#inp} - 3 ))
+    (( cursor_pad < 0 )) && cursor_pad=0
+    printf '\e[48;5;236m\e[38;5;220m :%s\e[38;5;51m_\e[0m\e[48;5;236m%-*s\e[0m' \
+      "$inp" "$cursor_pad" ""
+
+    # Separator
+    _at $(( box_r+2 )) "$box_c"
+    printf '\e[48;5;234m\e[38;5;238m%-*s\e[0m' "$box_w" \
+      "$(printf '%*s' "$box_w" '' | tr ' ' '-')"
+
+    # Matching entries
+    local row=$(( box_r+3 ))
+    local matches=0
+    local ak
+    for ak in "${KX_ALIAS_DISPLAY[@]}"; do
+      local target="${KX_ALIASES[$ak]:-}"
+      [[ -z "$target" ]] && continue
+
+      # Show all when empty input, or filter by prefix
+      if [[ -z "$inp" || "$ak" == "$inp"* || "$target" == "$inp"* ]]; then
+        (( row >= box_r+box_h-1 )) && break
+        _at "$row" "$box_c"
+        if [[ -n "$inp" && ( "$ak" == "$inp"* || "$target" == "$inp"* ) ]]; then
+          printf '\e[48;5;234m \e[38;5;51m\e[1m%-10s\e[0m\e[48;5;234m\e[38;5;248m → %-15s\e[0m' \
+            "$ak" "$target"
+        else
+          printf '\e[48;5;234m \e[38;5;240m%-10s → %-15s\e[0m' "$ak" "$target"
+        fi
+        _eol
+        (( row++ )); (( matches++ ))
+      fi
+    done
+
+    if (( matches == 0 )); then
+      _at $(( box_r+3 )) "$box_c"
+      printf '\e[48;5;234m \e[38;5;196m no match for "%s"\e[0m' "$inp"
+    fi
+
+    # Bottom hint
+    _at $(( box_r+box_h-1 )) "$box_c"
+    printf '\e[48;5;234m\e[38;5;240m %-*s\e[0m' $(( box_w-1 )) \
+      "Enter=go  Esc/:=cancel  type to filter"
+  }
+
+  _draw_palette "$input"
+  _drain_input
+
+  while true; do
+    local key=""
+    IFS= read -rsn1 key
+    case "$key" in
+      $'\x1b')
+        local seq=""; read -rsn2 -t 0.15 seq || seq=""
+        _drain_input
+        # ESC or any escape sequence — cancel
+        return
+        ;;
+      ':')
+        # Second colon cancels
+        return
+        ;;
+      $'\x7f'|$'\b')
+        [[ -n "$input" ]] && input="${input%?}"
+        ;;
+      '')
+        # Enter — find best match and switch
+        local target=""
+        # Exact alias match first
+        if [[ -n "${KX_ALIASES[$input]:-}" ]]; then
+          target="${KX_ALIASES[$input]}"
+        else
+          # Prefix match — pick first
+          local ak
+          for ak in "${KX_ALIAS_DISPLAY[@]}"; do
+            local t="${KX_ALIASES[$ak]:-}"
+            if [[ -n "$t" && ( "$ak" == "$input"* || "$t" == "$input"* ) ]]; then
+              target="$t"
+              break
+            fi
+          done
+        fi
+        if [[ -n "$target" ]]; then
+          _switch_view "$target"
+        fi
+        return
+        ;;
+      *)
+        if [[ "$key" =~ [[:alnum:]_-] ]]; then
+          input+="$key"
+        fi
+        ;;
+    esac
+    _draw_palette "$input"
+  done
 }
 
 # ── Search/filter input ────────────────────────────────────
@@ -2359,20 +2677,13 @@ _pager_text() {
 }
 
 _render_view() {
-  local now
-  now=$(date +%s)
-
-  _clear
-
-  if (( now - LAST_REFRESH >= REFRESH_INTERVAL )); then
-    _draw_header
-    _draw_tabs
-    _at 6 3
-    printf '%b  fetching %s...%b' "$C_GRAY" "$CURRENT_VIEW" "$C_RESET"
+  # Only fetch data on first load of a view (LAST_REFRESH==0)
+  # All other refreshes are manual via R
+  if (( LAST_REFRESH == 0 )); then
     _refresh_data
-    _clear
   fi
 
+  _clear
   _draw_header
   _draw_tabs
 
@@ -2392,6 +2703,7 @@ _render_view() {
     jobs)       _render_jobs       ;;
     cronjobs)   _render_cronjobs   ;;
     hpa)        _render_hpa        ;;
+    namespaces) _render_namespaces ;;
   esac
 
   _draw_statusbar
@@ -2407,21 +2719,17 @@ _main_loop() {
 
     _render_view
 
-    # Drain any buffered input before blocking — kills ghost selects
-    # from keys pressed during renders, kubectl calls, or sub-screens
+    # Drain any buffered input before blocking
     _drain_input
 
-    # Read input with timeout for auto-refresh.
-    # IMPORTANT: capture read's exit code separately.
-    # When the timer expires read returns 1 and key stays "".
-    # That empty string is identical to Enter, so we must NOT
-    # fall through to the case statement on a timeout.
+    # Block waiting for a keypress. Use a long timeout (60s) purely as
+    # a keepalive — on timeout we just re-render (clock update) but
+    # NEVER auto-refresh data. Data only refreshes on R or view switch.
     local key=""
     local _read_rc=0
-    IFS= read -rsn1 -t "$REFRESH_INTERVAL" key || _read_rc=$?
+    IFS= read -rsn1 -t 60 key || _read_rc=$?
 
-    # Exit code 1 from read means timeout — just loop to re-render.
-    # Exit code >1 means a real error. Either way, skip key handling.
+    # Timeout (rc=1) — just re-render to update the clock, no data fetch
     (( _read_rc > 0 )) && continue
 
     case "$key" in
@@ -2432,32 +2740,29 @@ _main_loop() {
       # ── Help ──────────────────────────────────────────────
       '?') _show_help; _clear; DETAIL_MODE=false ;;
 
-      # ── View switching ─ row 1 (1-9) ─────────────────────
-      1|p) CURRENT_VIEW="pods";     SELECTED_IDX=0; FILTER=""; LAST_REFRESH=0; DETAIL_MODE=false; _clear ;;
-      2)   CURRENT_VIEW="deploys";  SELECTED_IDX=0; FILTER=""; LAST_REFRESH=0; DETAIL_MODE=false; _clear ;;
-      3)   CURRENT_VIEW="nodes";    SELECTED_IDX=0; FILTER=""; LAST_REFRESH=0; DETAIL_MODE=false; _clear ;;
-      4)   CURRENT_VIEW="events";   SELECTED_IDX=0; FILTER=""; LAST_REFRESH=0; DETAIL_MODE=false; CURRENT_NS="all"; _clear ;;
-      5|a) CURRENT_VIEW="argocd";   SELECTED_IDX=0; FILTER=""; LAST_REFRESH=0; DETAIL_MODE=false; _clear ;;
-      6)   CURRENT_VIEW="certs";    SELECTED_IDX=0; FILTER=""; LAST_REFRESH=0; DETAIL_MODE=false; _clear ;;
-      7|s) CURRENT_VIEW="secrets";  SELECTED_IDX=0; FILTER=""; LAST_REFRESH=0; DETAIL_MODE=false; _clear ;;
-      8)   CURRENT_VIEW="services"; SELECTED_IDX=0; FILTER=""; LAST_REFRESH=0; DETAIL_MODE=false; _clear ;;
-      9|h) CURRENT_VIEW="helm";     SELECTED_IDX=0; FILTER=""; LAST_REFRESH=0; DETAIL_MODE=false; _clear ;;
+      # ── View switching ─────────────────────────────────────
+      1|p) _switch_view "pods"      ;;
+      2)   _switch_view "deploys"   ;;
+      3)   _switch_view "nodes"     ;;
+      4)   _switch_view "events"; [[ "$CURRENT_NS" != "all" ]] && CURRENT_NS="all" && LAST_REFRESH=0 ;;
+      5|a) _switch_view "argocd"    ;;
+      6)   _switch_view "certs"     ;;
+      7|s) _switch_view "secrets"   ;;
+      8)   _switch_view "services"  ;;
+      9|h) _switch_view "helm"      ;;
 
-      # ── View switching — row 2 (10-15) ───────────────────
-      0)   CURRENT_VIEW="configmaps"; SELECTED_IDX=0; FILTER=""; LAST_REFRESH=0; DETAIL_MODE=false; _clear ;;
-      P)   CURRENT_VIEW="pvcs";       SELECTED_IDX=0; FILTER=""; LAST_REFRESH=0; DETAIL_MODE=false; _clear ;;
-      i)   CURRENT_VIEW="ingresses";  SELECTED_IDX=0; FILTER=""; LAST_REFRESH=0; DETAIL_MODE=false; _clear ;;
-      J)   CURRENT_VIEW="jobs";       SELECTED_IDX=0; FILTER=""; LAST_REFRESH=0; DETAIL_MODE=false; _clear ;;
-      W)   CURRENT_VIEW="cronjobs";   SELECTED_IDX=0; FILTER=""; LAST_REFRESH=0; DETAIL_MODE=false; _clear ;;
-      A)   CURRENT_VIEW="hpa";        SELECTED_IDX=0; FILTER=""; LAST_REFRESH=0; DETAIL_MODE=false; _clear ;;
+      # ── Command palette ───────────────────────────────────
+      ':')
+        _command_palette
+        _clear
+        ;;
 
       # ── Tab navigation ────────────────────────────────────
       $'\t')
-        local views=("pods" "deploys" "nodes" "events" "argocd" "certs" "secrets" "services" "helm" "configmaps" "pvcs" "ingresses" "jobs" "cronjobs" "hpa")
+        local views=("pods" "deploys" "nodes" "events" "argocd" "certs" "secrets" "services" "helm" "configmaps" "pvcs" "ingresses" "jobs" "cronjobs" "hpa" "namespaces")
         local cur_idx=0
         for i in "${!views[@]}"; do [[ "${views[$i]}" == "$CURRENT_VIEW" ]] && cur_idx=$i; done
-        CURRENT_VIEW="${views[$(( (cur_idx+1) % ${#views[@]} ))]}"
-        SELECTED_IDX=0; FILTER=""; LAST_REFRESH=0; DETAIL_MODE=false; _clear
+        _switch_view "${views[$(( (cur_idx+1) % ${#views[@]} ))]}"
         ;;
 
       # ── Navigation ────────────────────────────────────────
@@ -2482,11 +2787,10 @@ _main_loop() {
             fi
             ;;
           "[Z") # Shift-Tab
-            local views=("pods" "deploys" "nodes" "events" "argocd" "certs" "secrets" "services" "helm" "configmaps" "pvcs" "ingresses" "jobs" "cronjobs" "hpa")
+            local views=("pods" "deploys" "nodes" "events" "argocd" "certs" "secrets" "services" "helm" "configmaps" "pvcs" "ingresses" "jobs" "cronjobs" "hpa" "namespaces")
             local cur_idx=0
             for i in "${!views[@]}"; do [[ "${views[$i]}" == "$CURRENT_VIEW" ]] && cur_idx=$i; done
-            CURRENT_VIEW="${views[$(( (cur_idx-1+${#views[@]}) % ${#views[@]} ))]}"
-            SELECTED_IDX=0; FILTER=""; LAST_REFRESH=0; DETAIL_MODE=false; _clear
+            _switch_view "${views[$(( (cur_idx-1+${#views[@]}) % ${#views[@]} ))]}"
             ;;
         esac
         ;;
@@ -2532,9 +2836,19 @@ _main_loop() {
           continue
         fi
 
+        # Namespaces view — Enter switches to that namespace and goes to pods
+        if [[ "$CURRENT_VIEW" == "namespaces" ]]; then
+          IFS=$'\t' read -r ns_name _ <<< "$line"
+          if [[ "$ns_name" != "$CURRENT_NS" ]]; then
+            CURRENT_NS="$ns_name"
+            VIEW_LOADED=()
+          fi
+          _switch_view "pods"
+          continue
+        fi
+
         local res="pods"
         [[ "$CURRENT_VIEW" == "deploys"    ]] && res="deployment"
-        [[ "$CURRENT_VIEW" == "nodes"      ]] && res="node" && ns="default"
         [[ "$CURRENT_VIEW" == "argocd"     ]] && res="application.argoproj.io"
         [[ "$CURRENT_VIEW" == "certs"      ]] && res="certificate.cert-manager.io"
         [[ "$CURRENT_VIEW" == "secrets"    ]] && res="secret"
@@ -2545,6 +2859,13 @@ _main_loop() {
         [[ "$CURRENT_VIEW" == "jobs"       ]] && res="job"
         [[ "$CURRENT_VIEW" == "cronjobs"   ]] && res="cronjob"
         [[ "$CURRENT_VIEW" == "hpa"        ]] && res="horizontalpodautoscaler"
+
+        # Nodes have no namespace column — name is field 1
+        if [[ "$CURRENT_VIEW" == "nodes" ]]; then
+          IFS=$'\t' read -r name _ <<< "$line"
+          ns="default"
+          res="node"
+        fi
         [[ "$CURRENT_VIEW" == "helm"     ]] && {
           IFS=$'\t' read -r helm_name helm_ns helm_rev helm_status helm_chart helm_appver <<< "$line"
           # Build a comprehensive view: status header + values + notes
@@ -2607,12 +2928,21 @@ _main_loop() {
       # ── Describe ──────────────────────────────────────────
       d)
         local line; line=$(_selected_line) || continue
-        IFS=$'\t' read -r ns name _ <<< "$line"
         local res="pods"
-        [[ "$CURRENT_VIEW" == "deploys" ]] && res="deployment"
-        [[ "$CURRENT_VIEW" == "nodes"   ]] && res="node"
+        local desc_name desc_ns
+        if [[ "$CURRENT_VIEW" == "nodes" ]]; then
+          # nodes: name\tstatus\trole\tversion\tarch\tage  (no namespace)
+          IFS=$'\t' read -r desc_name _ <<< "$line"
+          desc_ns="default"
+          res="node"
+        elif [[ "$CURRENT_VIEW" == "deploys" ]]; then
+          IFS=$'\t' read -r desc_ns desc_name _ <<< "$line"
+          res="deployment"
+        else
+          IFS=$'\t' read -r desc_ns desc_name _ <<< "$line"
+        fi
         DETAIL_MODE=true
-        _show_detail "$res" "$name" "$ns"
+        _show_detail "$res" "$desc_name" "$desc_ns"
         DETAIL_MODE=false
         LAST_REFRESH=0
         _clear
@@ -2694,6 +3024,8 @@ _main_loop() {
 
       # ── Force refresh ─────────────────────────────────────
       R)
+        # Invalidate cache for current view only
+        unset "VIEW_LOADED[${CURRENT_VIEW}:${CURRENT_NS}]"
         LAST_REFRESH=0
         ;;
 
@@ -2715,11 +3047,10 @@ _bootstrap() {
     exit 1
   }
 
-  # Get current context and namespace
+  # Default to all namespaces on startup — k9s behaviour
+  # User can scope with n picker or -n flag
   CURRENT_CTX=$(kubectl config current-context 2>/dev/null || echo "none")
-  CURRENT_NS=$(kubectl config view --minify \
-    --output 'jsonpath={..namespace}' 2>/dev/null || echo "")
-  [[ -z "$CURRENT_NS" ]] && CURRENT_NS="default"
+  CURRENT_NS="all"
 
   # Handle args
   while [[ $# -gt 0 ]]; do
