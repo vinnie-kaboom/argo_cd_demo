@@ -23,7 +23,7 @@
 #    1-6                 Jump to view
 # ============================================================
 
-set -uo pipefail
+set -o pipefail
 
 # ── Version ────────────────────────────────────────────────
 VERSION="1.0.0"
@@ -56,16 +56,24 @@ BG_BAR=$'\e[48;5;235m'
 BG_SEL=$'\e[48;5;24m'
 BG_HDR=$'\e[48;5;17m'
 BG_BLACK=$'\e[48;5;232m'
+# Reset foreground only — used on selected rows to keep BG_SEL active
+SEL_RST=$'\e[39m'
 
 # ── State ──────────────────────────────────────────────────
 CURRENT_NS="default"
 CURRENT_CTX=""
 CURRENT_VIEW="pods"     # pods | deploys | nodes | events | argocd | certs
 SELECTED_IDX=0
+SCROLL_OFFSET=0         # first visible row in current view
 FILTER=""
 LAST_REFRESH=0
-REFRESH_INTERVAL=5      # seconds
+REFRESH_INTERVAL=5      # seconds (used in watch mode)
 LOG_FOLLOW=false
+WATCH_MODE=false        # when true, auto-refreshes every REFRESH_INTERVAL seconds
+READONLY=false          # when true, blocks destructive actions (delete, restart, exec)
+
+# Per-view load tracking — key is "view:namespace", value=1 when loaded
+declare -A VIEW_LOADED=()
 
 # View index for header tabs
 declare -A VIEW_IDX=([pods]=1 [deploys]=2 [nodes]=3 [events]=4 [argocd]=5 [certs]=6)
@@ -233,11 +241,21 @@ _draw_tabs() {
     printf '  \e[38;5;220m/%s\e[0m\e[48;5;235m' "$FILTER"
   fi
 
-  # Staleness indicator — show how old the data is
+  # Staleness / watch mode indicator
   local now elapsed stale_str stale_color
   now=$(date +%s)
   elapsed=$(( now - LAST_REFRESH ))
-  if (( LAST_REFRESH == 0 )); then
+
+  if $WATCH_MODE; then
+    # Pulse between two states using elapsed seconds for a blink effect
+    if (( elapsed % 2 == 0 )); then
+      stale_str=" ● WATCH ${REFRESH_INTERVAL}s"
+      stale_color='\e[38;5;208m'   # orange — bright
+    else
+      stale_str=" ○ WATCH ${REFRESH_INTERVAL}s"
+      stale_color='\e[38;5;130m'   # orange — dim
+    fi
+  elif (( LAST_REFRESH == 0 )); then
     stale_str=" no data yet"
     stale_color='\e[38;5;196m'
   elif (( elapsed < 60 )); then
@@ -247,7 +265,7 @@ _draw_tabs() {
     stale_str=" updated $((elapsed/60))m ago"
     stale_color='\e[38;5;220m'
   else
-    stale_str=" stale $((elapsed/60))m"
+    stale_str=" stale $((elapsed/60))m — press R"
     stale_color='\e[38;5;196m'
   fi
   local stale_len=${#stale_str}
@@ -281,8 +299,13 @@ _draw_statusbar() {
       "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
   else
     # Always shown
-    local always="%b[:]%b view  %b[↑↓/j/k]%b nav  %b[Enter]%b describe  %b[/]%b filter  %b[n]%b ns  %b[C]%b ctx  %b[R]%b refresh  %b[?]%b help  %b[q]%b quit"
-    local always_args=("$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r")
+    local watch_hint=""
+    $WATCH_MODE && watch_hint="%b[w]%b watch:ON  " || watch_hint="%b[w]%b watch  "
+    local watch_color="$C_CYAN"
+    $WATCH_MODE && watch_color="$C_ORANGE"
+
+    local always="$watch_hint%b[:]%b view  %b[↑↓/j/k]%b nav  %b[Enter]%b describe  %b[/]%b filter  %b[n]%b ns  %b[C]%b ctx  %b[R]%b refresh  %b[?]%b help  %b[q]%b quit"
+    local always_args=("$watch_color" "$C_RESET" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r")
 
     # View-specific extras shown before the always block
     local extras=""
@@ -501,21 +524,43 @@ for ev in items[-50:]:
 }
 
 _fetch_argocd() {
-  mapfile -t DATA_LINES < <(
-    kubectl get applications.argoproj.io -A \
-      --no-headers \
-      -o custom-columns=\
+  if command -v python3 &>/dev/null; then
+    mapfile -t DATA_LINES < <(
+      kubectl get applications.argoproj.io -A -o json 2>/dev/null \
+      | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+for app in data.get('items', []):
+    m   = app.get('metadata', {})
+    sp  = app.get('spec', {})
+    st  = app.get('status', {})
+    ns     = m.get('namespace', '')
+    name   = m.get('name', '')
+    sync   = st.get('sync', {}).get('status', 'Unknown')
+    health = st.get('health', {}).get('status', 'Unknown')
+    src    = sp.get('source') or (sp.get('sources') or [{}])[0]
+    repo   = src.get('repoURL', '')
+    path   = src.get('path', src.get('chart', ''))
+    target = sp.get('destination', {}).get('namespace', '')
+    print('\t'.join([ns, name, sync, health, repo, path, target]))
+" 2>/dev/null \
+      || echo "argocd-ns	not-found	N/A	N/A	N/A	N/A	N/A"
+    )
+  else
+    mapfile -t DATA_LINES < <(
+      kubectl get applications.argoproj.io -A \
+        --no-headers \
+        -o custom-columns=\
 'NAMESPACE:.metadata.namespace,'\
 'NAME:.metadata.name,'\
 'SYNC:.status.sync.status,'\
 'HEALTH:.status.health.status,'\
-'REPO:.spec.source.repoURL,'\
-'PATH:.spec.source.path,'\
 'TARGET:.spec.destination.namespace' \
-      2>/dev/null \
-    | awk '{ printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", $1,$2,$3,$4,$5,$6,$7 }' \
-    || echo "argocd-ns	not-found	N/A	N/A	N/A	N/A	N/A"
-  )
+        2>/dev/null \
+      | awk '{ printf "%s\t%s\t%s\t%s\tN/A\tN/A\t%s\n",$1,$2,$3,$4,$5 }' \
+      || echo "argocd-ns	not-found	N/A	N/A	N/A	N/A	N/A"
+    )
+  fi
 }
 
 _fetch_certs() {
@@ -809,7 +854,13 @@ _render_pods() {
   local filtered=()
   mapfile -t filtered < <(_filtered_lines)
 
-  for line in "${filtered[@]}"; do
+  # Render only the visible window starting at SCROLL_OFFSET
+  local visible_count=$(( TERM_ROWS - 4 - start_row ))
+  local render_end=$(( SCROLL_OFFSET + visible_count ))
+  (( render_end > ${#filtered[@]} )) && render_end=${#filtered[@]}
+
+  for (( idx=SCROLL_OFFSET; idx<render_end; idx++ )); do
+    local line="${filtered[$idx]}"
     (( row > TERM_ROWS - 4 )) && break
 
     IFS=$'\t' read -r ns name ready status restarts age node <<< "$line"
@@ -818,27 +869,26 @@ _render_pods() {
     sc=$(_status_color "$status")
 
     _at "$row" 1
-
+    local _rsel="" _rrst="$C_RESET"
     if (( idx == SELECTED_IDX )); then
       printf '%b' "$BG_SEL"
+      _rsel="$BG_SEL"
+      _rrst="$SEL_RST$BG_SEL"
     fi
 
+    local _restart_color="$C_LGRAY"
+    (( ${restarts:-0} > 5 )) && _restart_color="$C_RED"
+
     printf ' %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b %-*s %-*s' \
-      "$C_GRAY"  "$w_ns"       "$ns" \
-      "$C_RESET" "$C_WHITE"    "$w_name"     "${name:0:$w_name}" \
-      "$C_RESET" "$C_GREEN"    "$w_ready"    "$ready" \
-      "$C_RESET" "$sc"         "$w_status"   "$status" \
-      "$C_RESET" \
-      "$(if (( ${restarts:-0} > 5 )); then printf '%b' "$C_RED"; else printf '%b' "$C_LGRAY"; fi)" \
-      "$w_restarts" "${restarts:-0}" \
-      "$C_RESET" \
-      "$w_age"  "${age:0:$w_age}" \
-      "$w_node" "${node:0:$w_node}"
+      "$C_GRAY"        "$w_ns"       "$ns" \
+      "$_rrst"         "$C_WHITE"    "$w_name"     "${name:0:$w_name}" \
+      "$_rrst"         "$C_GREEN"    "$w_ready"    "$ready" \
+      "$_rrst"         "$sc"         "$w_status"   "$status" \
+      "$_rrst"         "$_restart_color" "$w_restarts" "${restarts:-0}" \
+      "$_rrst"         "$w_age"      "${age:0:$w_age}" \
+                       "$w_node"     "${node:0:$w_node}"
 
-    printf '%b' "$C_RESET"
-    _eol
-
-    (( idx++ ))
+    printf '%b' "$_rrst"; _eol; printf '%b' "$C_RESET"
     (( row++ ))
   done
 
@@ -872,27 +922,36 @@ _render_deploys() {
   _hline $(( start_row+1 )) 1 "$TERM_COLS" "-" "$C_GRAY"
 
   local row=$(( start_row+2 ))
-  local idx=0
   local filtered=()
   mapfile -t filtered < <(_filtered_lines)
+  local _vis=$(( TERM_ROWS - 4 - start_row ))
+  local _end=$(( SCROLL_OFFSET + _vis ))
+  (( _end > ${#filtered[@]} )) && _end=${#filtered[@]}
 
-  for line in "${filtered[@]}"; do
+  local idx
+  for (( idx=SCROLL_OFFSET; idx<_end; idx++ )); do
+    local line="${filtered[$idx]}"
     (( row > TERM_ROWS - 4 )) && break
     IFS=$'\t' read -r ns name ready status replicas rollout age <<< "$line"
     local sc; sc=$(_status_color "$status")
 
     _at "$row" 1
-    (( idx == SELECTED_IDX )) && printf '%b' "$BG_SEL"
+    local _rsel="" _rrst="$C_RESET"
+    if (( idx == SELECTED_IDX )); then
+      printf '%b' "$BG_SEL"
+      _rsel="$BG_SEL"
+      _rrst="$SEL_RST$BG_SEL"
+    fi
 
     printf ' %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b %-*s' \
       "$C_GRAY"  "$w_ns"    "$ns" \
-      "$C_RESET" "$C_WHITE" "$w_name"   "${name:0:$w_name}" \
-      "$C_RESET" "$C_WHITE" "$w_ready"  "$ready" \
-      "$C_RESET" "$sc"      "$w_status" "$status" \
-      "$C_RESET" "$w_age"   "${age:0:$w_age}"
+      "$_rrst" "$C_WHITE" "$w_name"   "${name:0:$w_name}" \
+      "$_rrst" "$C_WHITE" "$w_ready"  "$ready" \
+      "$_rrst" "$sc"      "$w_status" "$status" \
+      "$_rrst" "$w_age"   "${age:0:$w_age}"
 
-    printf '%b'; _eol
-    (( idx++ )); (( row++ ))
+    printf '%b' "$_rrst"; _eol; printf '%b' "$C_RESET"
+    (( row++ ))
   done
 }
 
@@ -912,11 +971,15 @@ _render_nodes() {
   _hline $(( start_row+1 )) 1 "$TERM_COLS" "-" "$C_GRAY"
 
   local row=$(( start_row+2 ))
-  local idx=0
   local filtered=()
   mapfile -t filtered < <(_filtered_lines)
+  local _vis=$(( TERM_ROWS - 4 - start_row ))
+  local _end=$(( SCROLL_OFFSET + _vis ))
+  (( _end > ${#filtered[@]} )) && _end=${#filtered[@]}
 
-  for line in "${filtered[@]}"; do
+  local idx
+  for (( idx=SCROLL_OFFSET; idx<_end; idx++ )); do
+    local line="${filtered[$idx]}"
     (( row > TERM_ROWS - 4 )) && break
     IFS=$'\t' read -r name status role version arch age <<< "$line"
     local sc; sc=$(_status_color "$status")
@@ -924,18 +987,23 @@ _render_nodes() {
     [[ "$role" == "worker" ]] && role_color="$C_LGRAY"
 
     _at "$row" 1
-    (( idx == SELECTED_IDX )) && printf '%b' "$BG_SEL"
+    local _rsel="" _rrst="$C_RESET"
+    if (( idx == SELECTED_IDX )); then
+      printf '%b' "$BG_SEL"
+      _rsel="$BG_SEL"
+      _rrst="$SEL_RST$BG_SEL"
+    fi
 
     printf ' %b%-*s%b %b%-*s%b %b%-*s%b %-*s %-*s %-*s' \
       "$C_WHITE"    "$w_name"   "${name:0:$w_name}" \
-      "$C_RESET"    "$sc"       "$w_status" "$status" \
-      "$C_RESET"    "$role_color" "$w_role" "$role" \
-      "$C_RESET"    "$w_ver"    "${version:0:$w_ver}" \
+      "$_rrst"    "$sc"       "$w_status" "$status" \
+      "$_rrst"    "$role_color" "$w_role" "$role" \
+      "$_rrst"    "$w_ver"    "${version:0:$w_ver}" \
                     "$w_arch"   "$arch" \
                     "$w_age"    "${age:0:$w_age}"
 
-    printf '%b'; _eol
-    (( idx++ )); (( row++ ))
+    printf '%b' "$_rrst"; _eol; printf '%b' "$C_RESET"
+    (( row++ ))
   done
 }
 
@@ -974,21 +1042,26 @@ _render_events() {
     [[ "$type" == "Error"   ]] && tc="$C_RED"
 
     _at "$row" 1
-    (( idx == SELECTED_IDX )) && printf '%b' "$BG_SEL"
+    local _rsel="" _rrst="$C_RESET"
+    if (( idx == SELECTED_IDX )); then
+      printf '%b' "$BG_SEL"
+      _rsel="$BG_SEL"
+      _rrst="$SEL_RST$BG_SEL"
+    fi
 
     local msg_width=$(( TERM_COLS - w_ns - w_time - w_type - w_reason - w_obj - 10 ))
     (( msg_width < 10 )) && msg_width=10
 
     printf ' %b%-*s%b %-*s %b%-*s%b %-*s %-*s %b%s%b' \
       "$C_GRAY"  "$w_ns"     "${ns:0:$w_ns}" \
-      "$C_RESET" "$w_time"   "${time:0:$w_time}" \
+      "$_rrst" "$w_time"   "${time:0:$w_time}" \
       "$tc"      "$w_type"   "${type:0:$w_type}" \
-      "$C_RESET" "$w_reason" "${reason:0:$w_reason}" \
+      "$_rrst" "$w_reason" "${reason:0:$w_reason}" \
                  "$w_obj"    "${obj:0:$w_obj}" \
-      "$C_LGRAY" "${msg:0:$msg_width}" "$C_RESET"
+      "$C_LGRAY" "${msg:0:$msg_width}" "$_rrst"
 
-    _eol
-    (( idx++ )); (( row++ ))
+    _eol; printf '%b' "$C_RESET"
+    (( row++ ))
   done
 
   if [[ ${#filtered[@]} -eq 0 ]]; then
@@ -1024,7 +1097,6 @@ _render_argocd() {
   _hline $(( start_row+1 )) 1 "$TERM_COLS" "-" "$C_GRAY"
 
   local row=$(( start_row+2 ))
-  local idx=0
   local filtered=()
   mapfile -t filtered < <(_filtered_lines)
 
@@ -1034,25 +1106,36 @@ _render_argocd() {
     return
   fi
 
-  for line in "${filtered[@]}"; do
+  local _vis=$(( TERM_ROWS - 4 - start_row ))
+  local _end=$(( SCROLL_OFFSET + _vis ))
+  (( _end > ${#filtered[@]} )) && _end=${#filtered[@]}
+
+  local idx
+  for (( idx=SCROLL_OFFSET; idx<_end; idx++ )); do
+    local line="${filtered[$idx]}"
     (( row > TERM_ROWS - 4 )) && break
     IFS=$'\t' read -r ns name sync health repo path target <<< "$line"
     local sc; sc=$(_status_color "$sync")
     local hc; hc=$(_status_color "$health")
 
     _at "$row" 1
-    (( idx == SELECTED_IDX )) && printf '%b' "$BG_SEL"
+    local _rsel="" _rrst="$C_RESET"
+    if (( idx == SELECTED_IDX )); then
+      printf '%b' "$BG_SEL"
+      _rsel="$BG_SEL"
+      _rrst="$SEL_RST$BG_SEL"
+    fi
 
     printf ' %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b %-*s %-*s' \
       "$C_GRAY"  "$w_ns"     "${ns:0:$w_ns}" \
-      "$C_RESET" "$C_WHITE"  "$w_name"   "${name:0:$w_name}" \
-      "$C_RESET" "$sc"       "$w_sync"   "$sync" \
-      "$C_RESET" "$hc"       "$w_health" "$health" \
-      "$C_RESET" "$w_target" "${target:0:$w_target}" \
+      "$_rrst" "$C_WHITE"  "$w_name"   "${name:0:$w_name}" \
+      "$_rrst" "$sc"       "$w_sync"   "$sync" \
+      "$_rrst" "$hc"       "$w_health" "$health" \
+      "$_rrst" "$w_target" "${target:0:$w_target}" \
                  "$w_path"   "${path:0:$w_path}"
 
-    printf '%b'; _eol
-    (( idx++ )); (( row++ ))
+    printf '%b' "$_rrst"; _eol; printf '%b' "$C_RESET"
+    (( row++ ))
   done
 }
 
@@ -1072,7 +1155,6 @@ _render_certs() {
   _hline $(( start_row+1 )) 1 "$TERM_COLS" "-" "$C_GRAY"
 
   local row=$(( start_row+2 ))
-  local idx=0
   local filtered=()
   mapfile -t filtered < <(_filtered_lines)
 
@@ -1082,7 +1164,13 @@ _render_certs() {
     return
   fi
 
-  for line in "${filtered[@]}"; do
+  local _vis=$(( TERM_ROWS - 4 - start_row ))
+  local _end=$(( SCROLL_OFFSET + _vis ))
+  (( _end > ${#filtered[@]} )) && _end=${#filtered[@]}
+
+  local idx
+  for (( idx=SCROLL_OFFSET; idx<_end; idx++ )); do
+    local line="${filtered[$idx]}"
     (( row > TERM_ROWS - 4 )) && break
     IFS=$'\t' read -r ns name ready secret issuer expiry renew <<< "$line"
     local rc; rc=$(_status_color "$ready")
@@ -1099,18 +1187,23 @@ _render_certs() {
     fi
 
     _at "$row" 1
-    (( idx == SELECTED_IDX )) && printf '%b' "$BG_SEL"
+    local _rsel="" _rrst="$C_RESET"
+    if (( idx == SELECTED_IDX )); then
+      printf '%b' "$BG_SEL"
+      _rsel="$BG_SEL"
+      _rrst="$SEL_RST$BG_SEL"
+    fi
 
     printf ' %b%-*s%b %b%-*s%b %b%-*s%b %-*s %-*s %b%-*s%b' \
       "$C_GRAY"  "$w_ns"     "${ns:0:$w_ns}" \
-      "$C_RESET" "$C_WHITE"  "$w_name"   "${name:0:$w_name}" \
-      "$C_RESET" "$rc"       "$w_ready"  "$ready" \
-      "$C_RESET" "$w_secret" "${secret:0:$w_secret}" \
+      "$_rrst" "$C_WHITE"  "$w_name"   "${name:0:$w_name}" \
+      "$_rrst" "$rc"       "$w_ready"  "$ready" \
+      "$_rrst" "$w_secret" "${secret:0:$w_secret}" \
                  "$w_issuer" "${issuer:0:$w_issuer}" \
-      "$ec"      "$w_expiry" "${expiry:0:$w_expiry}" "$C_RESET"
+      "$ec"      "$w_expiry" "${expiry:0:$w_expiry}" "$_rrst"
 
-    _eol
-    (( idx++ )); (( row++ ))
+    _eol; printf '%b' "$C_RESET"
+    (( row++ ))
   done
 }
 
@@ -1124,15 +1217,20 @@ _render_secrets() {
     "$C_BOLD" "$C_DCYAN" \
     "$w_ns" "NAMESPACE" "$w_name" "NAME" \
     "$w_type" "TYPE" "$w_keys" "KEYS" "$w_age" "AGE" \
-    "$C_RESET"
+    "$_rrst"
   _eol
   _hline $(( start_row+1 )) 1 "$TERM_COLS" "-" "$C_GRAY"
 
-  local row=$(( start_row+2 )) idx=0
+  local row=$(( start_row+2 ))
   local filtered=()
   mapfile -t filtered < <(_filtered_lines)
+  local _vis=$(( TERM_ROWS - 4 - start_row ))
+  local _end=$(( SCROLL_OFFSET + _vis ))
+  (( _end > ${#filtered[@]} )) && _end=${#filtered[@]}
 
-  for line in "${filtered[@]}"; do
+  local idx
+  for (( idx=SCROLL_OFFSET; idx<_end; idx++ )); do
+    local line="${filtered[$idx]}"
     (( row > TERM_ROWS - 4 )) && break
     IFS=$'\t' read -r ns name type keys age <<< "$line"
 
@@ -1144,17 +1242,22 @@ _render_secrets() {
     [[ "$type" == *"helm"*                              ]] && tc="$C_MAGENTA"
 
     _at "$row" 1
-    (( idx == SELECTED_IDX )) && printf '%b' "$BG_SEL"
+    local _rsel="" _rrst="$C_RESET"
+    if (( idx == SELECTED_IDX )); then
+      printf '%b' "$BG_SEL"
+      _rsel="$BG_SEL"
+      _rrst="$SEL_RST$BG_SEL"
+    fi
 
     printf ' %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b %-*s' \
       "$C_GRAY"  "$w_ns"   "${ns:0:$w_ns}" \
-      "$C_RESET" "$C_WHITE" "$w_name" "${name:0:$w_name}" \
-      "$C_RESET" "$tc"      "$w_type" "${type:0:$w_type}" \
-      "$C_RESET" "$C_LGRAY" "$w_keys" "${keys}" \
-      "$C_RESET"            "$w_age"  "${age:0:$w_age}"
+      "$_rrst" "$C_WHITE" "$w_name" "${name:0:$w_name}" \
+      "$_rrst" "$tc"      "$w_type" "${type:0:$w_type}" \
+      "$_rrst" "$C_LGRAY" "$w_keys" "${keys}" \
+      "$_rrst"            "$w_age"  "${age:0:$w_age}"
 
-    printf '%b'; _eol
-    (( idx++ )); (( row++ ))
+    printf '%b' "$_rrst"; _eol; printf '%b' "$C_RESET"
+    (( row++ ))
   done
 
   (( ${#filtered[@]} == 0 )) && {
@@ -1181,11 +1284,16 @@ _render_services() {
   _eol
   _hline $(( start_row+1 )) 1 "$TERM_COLS" "-" "$C_GRAY"
 
-  local row=$(( start_row+2 )) idx=0
+  local row=$(( start_row+2 ))
   local filtered=()
   mapfile -t filtered < <(_filtered_lines)
+  local _vis=$(( TERM_ROWS - 4 - start_row ))
+  local _end=$(( SCROLL_OFFSET + _vis ))
+  (( _end > ${#filtered[@]} )) && _end=${#filtered[@]}
 
-  for line in "${filtered[@]}"; do
+  local idx
+  for (( idx=SCROLL_OFFSET; idx<_end; idx++ )); do
+    local line="${filtered[$idx]}"
     (( row > TERM_ROWS - 4 )) && break
     IFS=$'\t' read -r ns name type cip eip ports age <<< "$line"
 
@@ -1200,19 +1308,24 @@ _render_services() {
     [[ "$eip_plain" != "-" && "$eip_plain" != "<none>" ]] && eip_color="$C_GREEN"
 
     _at "$row" 1
-    (( idx == SELECTED_IDX )) && printf '%b' "$BG_SEL"
+    local _rsel="" _rrst="$C_RESET"
+    if (( idx == SELECTED_IDX )); then
+      printf '%b' "$BG_SEL"
+      _rsel="$BG_SEL"
+      _rrst="$SEL_RST$BG_SEL"
+    fi
 
     printf ' %b%-*s%b %b%-*s%b %b%-*s%b %-*s %b%-*s%b %-*s %-*s' \
       "$C_GRAY"    "$w_ns"    "${ns:0:$w_ns}" \
-      "$C_RESET"   "$C_WHITE" "$w_name"  "${name:0:$w_name}" \
-      "$C_RESET"   "$tc"      "$w_type"  "${type:0:$w_type}" \
-      "$C_RESET"              "$w_cip"   "${cip:0:$w_cip}" \
+      "$_rrst"   "$C_WHITE" "$w_name"  "${name:0:$w_name}" \
+      "$_rrst"   "$tc"      "$w_type"  "${type:0:$w_type}" \
+      "$_rrst"              "$w_cip"   "${cip:0:$w_cip}" \
       "$eip_color"            "$w_eip"   "${eip_plain:0:$w_eip}" \
-      "$C_RESET"              "$w_ports" "${ports:0:$w_ports}" \
+      "$_rrst"              "$w_ports" "${ports:0:$w_ports}" \
                               "$w_age"   "${age:0:$w_age}"
 
-    printf '%b'; _eol
-    (( idx++ )); (( row++ ))
+    printf '%b' "$_rrst"; _eol; printf '%b' "$C_RESET"
+    (( row++ ))
   done
 
   (( ${#filtered[@]} == 0 )) && {
@@ -1249,8 +1362,13 @@ _render_helm() {
   fi
 
   local deployed=0 failed=0
+  local _vis=$(( TERM_ROWS - 4 - start_row ))
+  local _end=$(( SCROLL_OFFSET + _vis ))
+  (( _end > ${#filtered[@]} )) && _end=${#filtered[@]}
 
-  for line in "${filtered[@]}"; do
+  local idx
+  for (( idx=SCROLL_OFFSET; idx<_end; idx++ )); do
+    local line="${filtered[$idx]}"
     (( row > TERM_ROWS - 4 )) && break
     IFS=$'\t' read -r name ns rev status chart appver <<< "$line"
     [[ -z "$name" ]] && continue
@@ -1262,18 +1380,23 @@ _render_helm() {
     [[ "$status" == "pending"*   ]] && sc="$C_YELLOW"
 
     _at "$row" 1
-    (( idx == SELECTED_IDX )) && printf '%b' "$BG_SEL"
+    local _rsel="" _rrst="$C_RESET"
+    if (( idx == SELECTED_IDX )); then
+      printf '%b' "$BG_SEL"
+      _rsel="$BG_SEL"
+      _rrst="$SEL_RST$BG_SEL"
+    fi
 
     printf ' %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b %-*s %-*s' \
       "$C_WHITE"  "$w_name"   "${name:0:$w_name}" \
-      "$C_RESET"  "$C_YELLOW" "$w_ns"     "${ns:0:$w_ns}" \
-      "$C_RESET"  "$C_LGRAY"  "$w_rev"    "${rev:0:$w_rev}" \
-      "$C_RESET"  "$sc"       "$w_status" "${status:0:$w_status}" \
-      "$C_RESET"              "$w_chart"  "${chart:0:$w_chart}" \
+      "$_rrst"  "$C_YELLOW" "$w_ns"     "${ns:0:$w_ns}" \
+      "$_rrst"  "$C_LGRAY"  "$w_rev"    "${rev:0:$w_rev}" \
+      "$_rrst"  "$sc"       "$w_status" "${status:0:$w_status}" \
+      "$_rrst"              "$w_chart"  "${chart:0:$w_chart}" \
                               "$w_appver" "${appver:0:$w_appver}"
 
-    printf '%b'; _eol
-    (( idx++ )); (( row++ ))
+    printf '%b' "$_rrst"; _eol; printf '%b' "$C_RESET"
+    (( row++ ))
   done
 
   (( ${#filtered[@]} == 0 )) && {
@@ -1301,22 +1424,32 @@ _render_configmaps() {
   _eol
   _hline $(( start_row+1 )) 1 "$TERM_COLS" "-" "$C_GRAY"
 
-  local row=$(( start_row+2 )) idx=0
+  local row=$(( start_row+2 ))
   local filtered=(); mapfile -t filtered < <(_filtered_lines)
+  local _vis=$(( TERM_ROWS - 4 - start_row ))
+  local _end=$(( SCROLL_OFFSET + _vis ))
+  (( _end > ${#filtered[@]} )) && _end=${#filtered[@]}
 
-  for line in "${filtered[@]}"; do
+  local idx
+  for (( idx=SCROLL_OFFSET; idx<_end; idx++ )); do
+    local line="${filtered[$idx]}"
     (( row > TERM_ROWS - 4 )) && break
     IFS=$'\t' read -r ns name keys age <<< "$line"
     local kc="$C_LGRAY"; (( ${keys:-0} > 0 )) && kc="$C_WHITE"
     _at "$row" 1
-    (( idx == SELECTED_IDX )) && printf '%b' "$BG_SEL"
+    local _rsel="" _rrst="$C_RESET"
+    if (( idx == SELECTED_IDX )); then
+      printf '%b' "$BG_SEL"
+      _rsel="$BG_SEL"
+      _rrst="$SEL_RST$BG_SEL"
+    fi
     printf ' %b%-*s%b %b%-*s%b %b%-*s%b %-*s' \
       "$C_GRAY"  "$w_ns"   "${ns:0:$w_ns}" \
-      "$C_RESET" "$C_WHITE" "$w_name" "${name:0:$w_name}" \
-      "$C_RESET" "$kc"     "$w_keys" "${keys:-0}" \
-      "$C_RESET"           "$w_age"  "${age:0:$w_age}"
-    printf '%b'; _eol
-    (( idx++ )); (( row++ ))
+      "$_rrst" "$C_WHITE" "$w_name" "${name:0:$w_name}" \
+      "$_rrst" "$kc"     "$w_keys" "${keys:-0}" \
+      "$_rrst"           "$w_age"  "${age:0:$w_age}"
+    printf '%b' "$_rrst"; _eol; printf '%b' "$C_RESET"
+    (( row++ ))
   done
   (( ${#filtered[@]} == 0 )) && { _at $(( start_row+4 )) $(( TERM_COLS/2-10 )); printf '%bNo configmaps found%b' "$C_GRAY" "$C_RESET"; }
   _at $(( TERM_ROWS-2 )) 2
@@ -1337,25 +1470,35 @@ _render_pvcs() {
   _eol
   _hline $(( start_row+1 )) 1 "$TERM_COLS" "-" "$C_GRAY"
 
-  local row=$(( start_row+2 )) idx=0
+  local row=$(( start_row+2 ))
   local filtered=(); mapfile -t filtered < <(_filtered_lines)
+  local _vis=$(( TERM_ROWS - 4 - start_row ))
+  local _end=$(( SCROLL_OFFSET + _vis ))
+  (( _end > ${#filtered[@]} )) && _end=${#filtered[@]}
 
-  for line in "${filtered[@]}"; do
+  local idx
+  for (( idx=SCROLL_OFFSET; idx<_end; idx++ )); do
+    local line="${filtered[$idx]}"
     (( row > TERM_ROWS - 4 )) && break
     IFS=$'\t' read -r ns name status vol cap access sc age <<< "$line"
     local sc_color; sc_color=$(_status_color "$status")
     _at "$row" 1
-    (( idx == SELECTED_IDX )) && printf '%b' "$BG_SEL"
+    local _rsel="" _rrst="$C_RESET"
+    if (( idx == SELECTED_IDX )); then
+      printf '%b' "$BG_SEL"
+      _rsel="$BG_SEL"
+      _rrst="$SEL_RST$BG_SEL"
+    fi
     printf ' %b%-*s%b %b%-*s%b %b%-*s%b %-*s %-*s %-*s %-*s' \
       "$C_GRAY"  "$w_ns"     "${ns:0:$w_ns}" \
-      "$C_RESET" "$C_WHITE"  "$w_name"   "${name:0:$w_name}" \
-      "$C_RESET" "$sc_color" "$w_status" "${status:0:$w_status}" \
-      "$C_RESET"             "$w_vol"    "${vol:0:$w_vol}" \
+      "$_rrst" "$C_WHITE"  "$w_name"   "${name:0:$w_name}" \
+      "$_rrst" "$sc_color" "$w_status" "${status:0:$w_status}" \
+      "$_rrst"             "$w_vol"    "${vol:0:$w_vol}" \
                              "$w_cap"    "${cap:0:$w_cap}" \
                              "$w_sc"     "${sc:0:$w_sc}" \
                              "$w_age"    "${age:0:$w_age}"
-    printf '%b'; _eol
-    (( idx++ )); (( row++ ))
+    printf '%b' "$_rrst"; _eol; printf '%b' "$C_RESET"
+    (( row++ ))
   done
   (( ${#filtered[@]} == 0 )) && { _at $(( start_row+4 )) $(( TERM_COLS/2-10 )); printf '%bNo PVCs found%b' "$C_GRAY" "$C_RESET"; }
   local pending=0
@@ -1380,24 +1523,34 @@ _render_ingresses() {
   _eol
   _hline $(( start_row+1 )) 1 "$TERM_COLS" "-" "$C_GRAY"
 
-  local row=$(( start_row+2 )) idx=0
+  local row=$(( start_row+2 ))
   local filtered=(); mapfile -t filtered < <(_filtered_lines)
+  local _vis=$(( TERM_ROWS - 4 - start_row ))
+  local _end=$(( SCROLL_OFFSET + _vis ))
+  (( _end > ${#filtered[@]} )) && _end=${#filtered[@]}
 
-  for line in "${filtered[@]}"; do
+  local idx
+  for (( idx=SCROLL_OFFSET; idx<_end; idx++ )); do
+    local line="${filtered[$idx]}"
     (( row > TERM_ROWS - 4 )) && break
     IFS=$'\t' read -r ns name class hosts addr ports age <<< "$line"
     local ac="$C_LGRAY"; [[ -n "$addr" && "$addr" != "<none>" ]] && ac="$C_GREEN"
     _at "$row" 1
-    (( idx == SELECTED_IDX )) && printf '%b' "$BG_SEL"
+    local _rsel="" _rrst="$C_RESET"
+    if (( idx == SELECTED_IDX )); then
+      printf '%b' "$BG_SEL"
+      _rsel="$BG_SEL"
+      _rrst="$SEL_RST$BG_SEL"
+    fi
     printf ' %b%-*s%b %b%-*s%b %-*s %b%-*s%b %b%-*s%b %-*s' \
       "$C_GRAY"  "$w_ns"    "${ns:0:$w_ns}" \
-      "$C_RESET" "$C_WHITE" "$w_name"  "${name:0:$w_name}" \
-      "$C_RESET"            "$w_class" "${class:0:$w_class}" \
+      "$_rrst" "$C_WHITE" "$w_name"  "${name:0:$w_name}" \
+      "$_rrst"            "$w_class" "${class:0:$w_class}" \
       "$C_CYAN"             "$w_hosts" "${hosts:0:$w_hosts}" \
-      "$C_RESET" "$ac"      "$w_addr"  "${addr:0:$w_addr}" \
-      "$C_RESET"            "$w_age"   "${age:0:$w_age}"
-    printf '%b'; _eol
-    (( idx++ )); (( row++ ))
+      "$_rrst" "$ac"      "$w_addr"  "${addr:0:$w_addr}" \
+      "$_rrst"            "$w_age"   "${age:0:$w_age}"
+    printf '%b' "$_rrst"; _eol; printf '%b' "$C_RESET"
+    (( row++ ))
   done
   (( ${#filtered[@]} == 0 )) && { _at $(( start_row+4 )) $(( TERM_COLS/2-10 )); printf '%bNo ingresses found%b' "$C_GRAY" "$C_RESET"; }
   _at $(( TERM_ROWS-2 )) 2
@@ -1418,27 +1571,37 @@ _render_jobs() {
   _eol
   _hline $(( start_row+1 )) 1 "$TERM_COLS" "-" "$C_GRAY"
 
-  local row=$(( start_row+2 )) idx=0
+  local row=$(( start_row+2 ))
   local filtered=(); mapfile -t filtered < <(_filtered_lines)
   local complete=0 failed=0
+  local _vis=$(( TERM_ROWS - 4 - start_row ))
+  local _end=$(( SCROLL_OFFSET + _vis ))
+  (( _end > ${#filtered[@]} )) && _end=${#filtered[@]}
 
-  for line in "${filtered[@]}"; do
+  local idx
+  for (( idx=SCROLL_OFFSET; idx<_end; idx++ )); do
+    local line="${filtered[$idx]}"
     (( row > TERM_ROWS - 4 )) && break
     IFS=$'\t' read -r ns name comp status dur age <<< "$line"
     local sc="$C_YELLOW"
     [[ "$status" == "Complete" ]] && sc="$C_GREEN"  && (( complete++ ))
     [[ "$status" == "Failed"   ]] && sc="$C_RED"    && (( failed++ ))
     _at "$row" 1
-    (( idx == SELECTED_IDX )) && printf '%b' "$BG_SEL"
+    local _rsel="" _rrst="$C_RESET"
+    if (( idx == SELECTED_IDX )); then
+      printf '%b' "$BG_SEL"
+      _rsel="$BG_SEL"
+      _rrst="$SEL_RST$BG_SEL"
+    fi
     printf ' %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b %-*s %-*s' \
       "$C_GRAY"  "$w_ns"   "${ns:0:$w_ns}" \
-      "$C_RESET" "$C_WHITE" "$w_name"   "${name:0:$w_name}" \
-      "$C_RESET" "$C_LGRAY" "$w_comp"   "${comp:0:$w_comp}" \
-      "$C_RESET" "$sc"      "$w_status" "${status:0:$w_status}" \
-      "$C_RESET"            "$w_dur"    "${dur:0:$w_dur}" \
+      "$_rrst" "$C_WHITE" "$w_name"   "${name:0:$w_name}" \
+      "$_rrst" "$C_LGRAY" "$w_comp"   "${comp:0:$w_comp}" \
+      "$_rrst" "$sc"      "$w_status" "${status:0:$w_status}" \
+      "$_rrst"            "$w_dur"    "${dur:0:$w_dur}" \
                             "$w_age"    "${age:0:$w_age}"
-    printf '%b'; _eol
-    (( idx++ )); (( row++ ))
+    printf '%b' "$_rrst"; _eol; printf '%b' "$C_RESET"
+    (( row++ ))
   done
   (( ${#filtered[@]} == 0 )) && { _at $(( start_row+4 )) $(( TERM_COLS/2-10 )); printf '%bNo jobs found%b' "$C_GRAY" "$C_RESET"; }
   _at $(( TERM_ROWS-2 )) 2
@@ -1462,26 +1625,36 @@ _render_cronjobs() {
   _eol
   _hline $(( start_row+1 )) 1 "$TERM_COLS" "-" "$C_GRAY"
 
-  local row=$(( start_row+2 )) idx=0
+  local row=$(( start_row+2 ))
   local filtered=(); mapfile -t filtered < <(_filtered_lines)
+  local _vis=$(( TERM_ROWS - 4 - start_row ))
+  local _end=$(( SCROLL_OFFSET + _vis ))
+  (( _end > ${#filtered[@]} )) && _end=${#filtered[@]}
 
-  for line in "${filtered[@]}"; do
+  local idx
+  for (( idx=SCROLL_OFFSET; idx<_end; idx++ )); do
+    local line="${filtered[$idx]}"
     (( row > TERM_ROWS - 4 )) && break
     IFS=$'\t' read -r ns name sched susp active last age <<< "$line"
     local sc="$C_WHITE"; [[ "$susp" == "Yes" ]] && sc="$C_YELLOW"
     local ac="$C_LGRAY"; (( ${active:-0} > 0 )) && ac="$C_GREEN"
     _at "$row" 1
-    (( idx == SELECTED_IDX )) && printf '%b' "$BG_SEL"
+    local _rsel="" _rrst="$C_RESET"
+    if (( idx == SELECTED_IDX )); then
+      printf '%b' "$BG_SEL"
+      _rsel="$BG_SEL"
+      _rrst="$SEL_RST$BG_SEL"
+    fi
     printf ' %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b %-*s %-*s' \
       "$C_GRAY"  "$w_ns"    "${ns:0:$w_ns}" \
-      "$C_RESET" "$C_WHITE" "$w_name"   "${name:0:$w_name}" \
-      "$C_RESET" "$C_CYAN"  "$w_sched"  "${sched:0:$w_sched}" \
-      "$C_RESET" "$sc"      "$w_susp"   "${susp:0:$w_susp}" \
-      "$C_RESET" "$ac"      "$w_active" "${active:-0}" \
-      "$C_RESET"            "$w_last"   "${last:0:$w_last}" \
+      "$_rrst" "$C_WHITE" "$w_name"   "${name:0:$w_name}" \
+      "$_rrst" "$C_CYAN"  "$w_sched"  "${sched:0:$w_sched}" \
+      "$_rrst" "$sc"      "$w_susp"   "${susp:0:$w_susp}" \
+      "$_rrst" "$ac"      "$w_active" "${active:-0}" \
+      "$_rrst"            "$w_last"   "${last:0:$w_last}" \
                             "$w_age"    "${age:0:$w_age}"
-    printf '%b'; _eol
-    (( idx++ )); (( row++ ))
+    printf '%b' "$_rrst"; _eol; printf '%b' "$C_RESET"
+    (( row++ ))
   done
   (( ${#filtered[@]} == 0 )) && { _at $(( start_row+4 )) $(( TERM_COLS/2-10 )); printf '%bNo cronjobs found%b' "$C_GRAY" "$C_RESET"; }
   _at $(( TERM_ROWS-2 )) 2
@@ -1502,27 +1675,37 @@ _render_hpa() {
   _eol
   _hline $(( start_row+1 )) 1 "$TERM_COLS" "-" "$C_GRAY"
 
-  local row=$(( start_row+2 )) idx=0
+  local row=$(( start_row+2 ))
   local filtered=(); mapfile -t filtered < <(_filtered_lines)
+  local _vis=$(( TERM_ROWS - 4 - start_row ))
+  local _end=$(( SCROLL_OFFSET + _vis ))
+  (( _end > ${#filtered[@]} )) && _end=${#filtered[@]}
 
-  for line in "${filtered[@]}"; do
+  local idx
+  for (( idx=SCROLL_OFFSET; idx<_end; idx++ )); do
+    local line="${filtered[$idx]}"
     (( row > TERM_ROWS - 4 )) && break
     IFS=$'\t' read -r ns name ref min max cur age <<< "$line"
     local cc="$C_WHITE"
     (( ${cur:-0} >= ${max:-0} && ${max:-0} > 0 )) && cc="$C_RED"
     (( ${cur:-0} <= ${min:-0} && ${min:-0} > 0 )) && cc="$C_LGRAY"
     _at "$row" 1
-    (( idx == SELECTED_IDX )) && printf '%b' "$BG_SEL"
+    local _rsel="" _rrst="$C_RESET"
+    if (( idx == SELECTED_IDX )); then
+      printf '%b' "$BG_SEL"
+      _rsel="$BG_SEL"
+      _rrst="$SEL_RST$BG_SEL"
+    fi
     printf ' %b%-*s%b %b%-*s%b %-*s %b%-*s%b %b%-*s%b %b%-*s%b %-*s' \
       "$C_GRAY"  "$w_ns"    "${ns:0:$w_ns}" \
-      "$C_RESET" "$C_WHITE" "$w_name" "${name:0:$w_name}" \
-      "$C_RESET"            "$w_ref"  "${ref:0:$w_ref}" \
+      "$_rrst" "$C_WHITE" "$w_name" "${name:0:$w_name}" \
+      "$_rrst"            "$w_ref"  "${ref:0:$w_ref}" \
       "$C_CYAN"             "$w_min"  "${min:0:$w_min}" \
-      "$C_RESET" "$C_CYAN"  "$w_max"  "${max:0:$w_max}" \
-      "$C_RESET" "$cc"      "$w_cur"  "${cur:-0}" \
-      "$C_RESET"            "$w_age"  "${age:0:$w_age}"
-    printf '%b'; _eol
-    (( idx++ )); (( row++ ))
+      "$_rrst" "$C_CYAN"  "$w_max"  "${max:0:$w_max}" \
+      "$_rrst" "$cc"      "$w_cur"  "${cur:-0}" \
+      "$_rrst"            "$w_age"  "${age:0:$w_age}"
+    printf '%b' "$_rrst"; _eol; printf '%b' "$C_RESET"
+    (( row++ ))
   done
   (( ${#filtered[@]} == 0 )) && { _at $(( start_row+4 )) $(( TERM_COLS/2-10 )); printf '%bNo HPAs found%b' "$C_GRAY" "$C_RESET"; }
   _at $(( TERM_ROWS-2 )) 2
@@ -1543,29 +1726,40 @@ _render_namespaces() {
   _eol
   _hline $(( start_row+1 )) 1 "$TERM_COLS" "-" "$C_GRAY"
 
-  local row=$(( start_row+2 )) idx=0
+  local row=$(( start_row+2 ))
   local filtered=(); mapfile -t filtered < <(_filtered_lines)
+  local _vis=$(( TERM_ROWS - 4 - start_row ))
+  local _end=$(( SCROLL_OFFSET + _vis ))
+  (( _end > ${#filtered[@]} )) && _end=${#filtered[@]}
 
-  for line in "${filtered[@]}"; do
+  local idx
+  for (( idx=SCROLL_OFFSET; idx<_end; idx++ )); do
+    local line="${filtered[$idx]}"
     (( row > TERM_ROWS - 4 )) && break
     IFS=$'\t' read -r name status age <<< "$line"
     local sc; sc=$(_status_color "$status")
 
-    # Mark active namespace with green bullet
+    _at "$row" 1
+    local _rsel="" _rrst="$C_RESET"
+    if (( idx == SELECTED_IDX )); then
+      printf '%b' "$BG_SEL"
+      _rsel="$BG_SEL"
+      _rrst="$SEL_RST$BG_SEL"
+    fi
+
+    # Mark active namespace with green bullet — restore bg after if selected
     local nc="$C_WHITE"
     local bullet="  "
     if [[ "$name" == "$CURRENT_NS" ]]; then
-      nc="$C_GREEN"; bullet="${C_GREEN}● ${C_RESET}"
+      nc="$C_GREEN"
+      bullet="${C_GREEN}●${C_RESET}${_rsel} "
     fi
-
-    _at "$row" 1
-    (( idx == SELECTED_IDX )) && printf '%b' "$BG_SEL"
     printf ' %b%b%-*s%b %b%-*s%b %-*s' \
       "$bullet" "$nc"      "$w_name"   "${name:0:$w_name}" \
-      "$C_RESET" "$sc"     "$w_status" "${status:0:$w_status}" \
-      "$C_RESET"           "$w_age"    "${age:0:$w_age}"
-    printf '%b'; _eol
-    (( idx++ )); (( row++ ))
+      "$_rrst" "$sc"     "$w_status" "${status:0:$w_status}" \
+      "$_rrst"           "$w_age"    "${age:0:$w_age}"
+    printf '%b' "$_rrst"; _eol; printf '%b' "$C_RESET"
+    (( row++ ))
   done
 
   (( ${#filtered[@]} == 0 )) && {
@@ -1601,6 +1795,36 @@ _show_top() {
   _term_init
 }
 
+# ── Prev-logs pager globals ────────────────────────────────
+_PL_POD="" _PL_TOTAL=0 _PL_OFFSET=0
+declare -a _PL_LINES=()
+
+_render_pl() {
+  TERM_ROWS=$(tput lines 2>/dev/null || echo 40)
+  TERM_COLS=$(tput cols  2>/dev/null || echo 120)
+  local view_h=$(( TERM_ROWS - 3 ))
+  _clear
+  _at 1 1
+  printf '%b%b kube-dash › prev-logs › %s %b' "$BG_HDR" "$C_CYAN" "$_PL_POD" "$C_RESET"; _eol
+  _at 2 1
+  printf '%b%b[q]%b back  %b[↑↓/j/k]%b scroll  %b[g]%b top  %b[G]%b bottom%b' \
+    "$BG_BAR" "$C_CYAN" "$C_RESET$BG_BAR" "$C_CYAN" "$C_RESET$BG_BAR" \
+    "$C_CYAN" "$C_RESET$BG_BAR" "$C_CYAN" "$C_RESET$BG_BAR" "$C_RESET"; _eol
+  local i
+  for (( i=0; i<view_h; i++ )); do
+    local li=$(( _PL_OFFSET + i ))
+    _at $(( i + 3 )) 1
+    if (( li < _PL_TOTAL )); then
+      local l="${_PL_LINES[$li]}"
+      if   [[ "$l" =~ ERROR|error|Error|FATAL|panic ]]; then printf '%b%s%b' "$C_RED"    "$l" "$C_RESET"
+      elif [[ "$l" =~ WARN|warn|WARNING              ]]; then printf '%b%s%b' "$C_YELLOW" "$l" "$C_RESET"
+      else printf '%s' "$l"; fi
+    fi; _eol
+  done
+  _at "$TERM_ROWS" 1
+  printf '%b%b line %d/%d%b' "$BG_BAR" "$C_GRAY" "$(( _PL_OFFSET+1 ))" "$_PL_TOTAL" "$C_RESET"
+}
+
 # ── Previous container logs (crashed pods) ─────────────────
 
 _show_prev_logs() {
@@ -1614,30 +1838,11 @@ _show_prev_logs() {
   local total_lines=${#all_lines[@]}
   local offset=0
 
-  _render_pl() {
-    TERM_ROWS=$(tput lines 2>/dev/null || echo 40)
-    TERM_COLS=$(tput cols  2>/dev/null || echo 120)
-    local view_h=$(( TERM_ROWS - 3 ))
-    _clear
-    _at 1 1
-    printf '%b%b kube-dash › prev-logs › %s %b' "$BG_HDR" "$C_CYAN" "$pod" "$C_RESET"; _eol
-    _at 2 1
-    printf '%b%b[q]%b back  %b[↑↓/j/k]%b scroll  %b[g]%b top  %b[G]%b bottom%b' \
-      "$BG_BAR" "$C_CYAN" "$C_RESET$BG_BAR" "$C_CYAN" "$C_RESET$BG_BAR" \
-      "$C_CYAN" "$C_RESET$BG_BAR" "$C_CYAN" "$C_RESET$BG_BAR" "$C_RESET"; _eol
-    for (( i=0; i<view_h; i++ )); do
-      local li=$(( offset + i ))
-      _at $(( i + 3 )) 1
-      if (( li < total_lines )); then
-        local l="${all_lines[$li]}"
-        if   [[ "$l" =~ ERROR|error|Error|FATAL|panic ]]; then printf '%b%s%b' "$C_RED"    "$l" "$C_RESET"
-        elif [[ "$l" =~ WARN|warn|WARNING              ]]; then printf '%b%s%b' "$C_YELLOW" "$l" "$C_RESET"
-        else printf '%s' "$l"; fi
-      fi; _eol
-    done
-    _at "$TERM_ROWS" 1
-    printf '%b%b line %d/%d%b' "$BG_BAR" "$C_GRAY" "$(( offset+1 ))" "$total_lines" "$C_RESET"
-  }
+  # Store state in globals so _render_pl (top-level) can access them
+  _PL_POD="$pod"
+  _PL_LINES=("${all_lines[@]}")
+  _PL_TOTAL=$total_lines
+  _PL_OFFSET=0
 
   _render_pl; _drain_input
   while true; do
@@ -1645,15 +1850,15 @@ _show_prev_logs() {
     local view_h=$(( TERM_ROWS - 3 ))
     case "$key" in
       q|Q) _clear; return ;;
-      g)   offset=0 ;;
-      G)   offset=$(( total_lines - view_h )); (( offset < 0 )) && offset=0 ;;
-      j)   (( offset + view_h < total_lines )) && (( offset++ )) ;;
-      k)   (( offset > 0 )) && (( offset-- )) ;;
+      g)   _PL_OFFSET=0 ;;
+      G)   _PL_OFFSET=$(( _PL_TOTAL - view_h )); (( _PL_OFFSET < 0 )) && _PL_OFFSET=0 ;;
+      j)   (( _PL_OFFSET + view_h < _PL_TOTAL )) && (( _PL_OFFSET++ )) ;;
+      k)   (( _PL_OFFSET > 0 )) && (( _PL_OFFSET-- )) ;;
       $'\x1b')
         local seq=""; read -rsn2 -t 0.15 seq || seq=""; _drain_input
         case "$seq" in
-          "[A") (( offset > 0 )) && (( offset-- )) ;;
-          "[B") (( offset + view_h < total_lines )) && (( offset++ )) ;;
+          "[A") (( _PL_OFFSET > 0 )) && (( _PL_OFFSET-- )) ;;
+          "[B") (( _PL_OFFSET + view_h < _PL_TOTAL )) && (( _PL_OFFSET++ )) ;;
           "") _clear; return ;;
         esac ;;
     esac
@@ -2197,6 +2402,22 @@ _pick_context() {
   done
 }
 
+# ── Help helpers (top-level to avoid set -u nested function issue) ─────────
+_help_row() {
+  _at "$_help_row_num" "$_help_col1"
+  printf '%b%-22s%b %s' "$C_CYAN" "$1" "$C_RESET" "$2"
+  _help_row_num=$(( _help_row_num + 1 ))
+}
+
+_help_section() {
+  _help_row_num=$(( _help_row_num + 1 ))
+  _at "$_help_row_num" "$_help_col1"
+  printf '%b%b%s%b' "$C_YELLOW" "$C_BOLD" "$1" "$C_RESET"
+  _help_row_num=$(( _help_row_num + 1 ))
+  _hline "$_help_row_num" "$_help_col1" 50 "-" "$C_GRAY"
+  _help_row_num=$(( _help_row_num + 1 ))
+}
+
 # ── Help screen ────────────────────────────────────────────
 
 _show_help() {
@@ -2204,22 +2425,9 @@ _show_help() {
   _at 1 1
   printf '%b%b kube-dash v%s › help %b' "$BG_HDR" "$C_CYAN" "$VERSION" "$C_RESET"
 
-  local col1=4 col2=28 row=3
-
-  _help_row() {
-    _at "$row" "$col1"
-    printf '%b%-22s%b %s' "$C_CYAN" "$1" "$C_RESET" "$2"
-    (( row++ ))
-  }
-
-  _help_section() {
-    (( row++ ))
-    _at "$row" "$col1"
-    printf '%b%b%s%b' "$C_YELLOW" "$C_BOLD" "$1" "$C_RESET"
-    (( row++ ))
-    _hline "$row" "$col1" 50 "-" "$C_GRAY"
-    (( row++ ))
-  }
+  local col1=4
+  _help_row_num=3
+  _help_col1=$col1
 
   _help_section "Navigation"
   _help_row "↑↓ / j k"     "Move selection up/down"
@@ -2278,12 +2486,13 @@ _show_help() {
   _help_row "hpa"            "HPA"
 
   _help_section "General"
+  _help_row "w"            "Toggle watch mode (auto-refresh every 5s)"
   _help_row "?"            "This help screen"
   _help_row "R"            "Force refresh"
   _help_row "q / Ctrl-C"   "Quit / go back"
 
-  (( row += 2 ))
-  _at "$row" "$col1"
+  (( _help_row_num += 2 ))
+  _at "$_help_row_num" "$_help_col1"
   printf '%bPress any key to return...%b' "$C_GRAY" "$C_RESET"
   _drain_input
   read -rsn1
@@ -2293,19 +2502,36 @@ _show_help() {
 # ── Command palette (:) ────────────────────────────────────
 # Type an alias and jump to that view — just like k9s
 
-# Track which views have been loaded at least once
-declare -A VIEW_LOADED=()
+# Adjust SCROLL_OFFSET so SELECTED_IDX is always visible
+# Adjust SCROLL_OFFSET so SELECTED_IDX is always visible
+_clamp_scroll() {
+  # Must match the _vis formula used in every renderer:
+  # _vis = TERM_ROWS - 4 - start_row, where start_row=4
+  # Content rows run from start_row+2 to TERM_ROWS-4 inclusive
+  local start_row=4
+  local visible=$(( TERM_ROWS - 4 - start_row ))
+  (( visible < 1 )) && visible=1
+  # Scroll down if selection is below visible window
+  if (( SELECTED_IDX >= SCROLL_OFFSET + visible )); then
+    SCROLL_OFFSET=$(( SELECTED_IDX - visible + 1 ))
+  fi
+  # Scroll up if selection is above visible window
+  if (( SELECTED_IDX < SCROLL_OFFSET )); then
+    SCROLL_OFFSET=$SELECTED_IDX
+  fi
+  # Never go negative
+  (( SCROLL_OFFSET < 0 )) && SCROLL_OFFSET=0
+}
 
 # Switch to a view — fetch on first visit, use cache on revisit
 _switch_view() {
   local view="$1"
-  local prev_view="$CURRENT_VIEW"
   CURRENT_VIEW="$view"
   SELECTED_IDX=0
+  SCROLL_OFFSET=0
   FILTER=""
   DETAIL_MODE=false
-  # Only trigger a fetch if this view has never been loaded,
-  # or if the namespace changed since last load
+  WATCH_MODE=false   # reset watch mode — you were watching the previous view
   local load_key="${view}:${CURRENT_NS}"
   if [[ -z "${VIEW_LOADED[$load_key]:-}" ]]; then
     LAST_REFRESH=0
@@ -2331,10 +2557,82 @@ declare -A KX_ALIASES=(
   [hpa]="hpa"         [autoscaler]="hpa"
 )
 
+# Friendly labels shown in the palette (what the user sees)
+declare -A KX_LABELS=(
+  [po]="Pods"
+  [dep]="Deployments"
+  [no]="Nodes"
+  [ev]="Events"
+  [app]="ArgoCD Applications"
+  [cert]="Certificates"
+  [sec]="Secrets"
+  [svc]="Services"
+  [helm]="Helm Releases"
+  [cm]="ConfigMaps"
+  [pvc]="PersistentVolumeClaims"
+  [ing]="Ingresses"
+  [job]="Jobs"
+  [cj]="CronJobs"
+  [hpa]="HorizontalPodAutoscalers"
+  [ns]="Namespaces"
+)
+
 # Display order for the palette list
 KX_ALIAS_DISPLAY=(po dep no ev app cert sec svc helm cm pvc ing job cj hpa ns)
+_draw_palette() {
+  local inp="$1" br="$2" bc="$3" bw="$4" bh="$5"
+  local r
 
-# ── Command palette ────────────────────────────────────────
+  for (( r=br; r<br+bh; r++ )); do
+    _at "$r" "$bc"
+    printf '\e[48;5;234m%-*s\e[0m' "$bw" ""
+  done
+
+  _at "$br" "$bc"
+  printf '\e[48;5;24m\e[38;5;255m\e[1m %-*s\e[0m' $(( bw-1 )) " kube-dash › switch view"
+
+  _at $(( br+1 )) "$bc"
+  local cursor_pad=$(( bw - ${#inp} - 3 ))
+  (( cursor_pad < 0 )) && cursor_pad=0
+  printf '\e[48;5;236m\e[38;5;220m :%s\e[38;5;51m_\e[0m\e[48;5;236m%-*s\e[0m' \
+    "$inp" "$cursor_pad" ""
+
+  _at $(( br+2 )) "$bc"
+  printf '\e[48;5;234m\e[38;5;238m%-*s\e[0m' "$bw" \
+    "$(printf '%*s' "$bw" '' | tr ' ' '-')"
+
+  local row=$(( br+3 ))
+  local matches=0
+  local ak
+  for ak in "${KX_ALIAS_DISPLAY[@]}"; do
+    local target="${KX_ALIASES[$ak]:-}"
+    local label="${KX_LABELS[$ak]:-$target}"
+    [[ -z "$target" ]] && continue
+    if [[ -z "$inp" || "$ak" == "$inp"* || "$label" == "$inp"* || "$target" == "$inp"* ]]; then
+      (( row >= br+bh-1 )) && break
+      _at "$row" "$bc"
+      if [[ -n "$inp" && ( "$ak" == "$inp"* || "$label" == "$inp"* || "$target" == "$inp"* ) ]]; then
+        printf '\e[48;5;234m \e[38;5;51m\e[1m%-8s\e[0m\e[48;5;234m\e[38;5;248m  %-22s\e[0m' \
+          "$ak" "$label"
+      else
+        printf '\e[48;5;234m \e[38;5;240m%-8s  %-22s\e[0m' "$ak" "$label"
+      fi
+      _eol
+      row=$(( row + 1 ))
+      matches=$(( matches + 1 ))
+    fi
+  done
+
+  if (( matches == 0 )); then
+    _at $(( br+3 )) "$bc"
+    printf '\e[48;5;234m \e[38;5;196m no match for "%s"\e[0m' "$inp"
+  fi
+
+  _at $(( br+bh-1 )) "$bc"
+  printf '\e[48;5;234m\e[38;5;240m %-*s\e[0m' $(( bw-1 )) \
+    "Enter=go  Esc/:=cancel  type to filter"
+}
+
 _command_palette() {
   TERM_ROWS=$(tput lines 2>/dev/null || echo 40)
   TERM_COLS=$(tput cols  2>/dev/null || echo 120)
@@ -2344,67 +2642,7 @@ _command_palette() {
   local box_c=$(( TERM_COLS/2 - box_w/2 ))
   local input=""
 
-  _draw_palette() {
-    local inp="$1"
-    local r
-
-    # Draw box background
-    for (( r=box_r; r<box_r+box_h; r++ )); do
-      _at "$r" "$box_c"
-      printf '\e[48;5;234m%-*s\e[0m' "$box_w" ""
-    done
-
-    # Title
-    _at "$box_r" "$box_c"
-    printf '\e[48;5;24m\e[38;5;255m\e[1m %-*s\e[0m' $(( box_w-1 )) " kube-dash › switch view"
-
-    # Input line
-    _at $(( box_r+1 )) "$box_c"
-    local cursor_pad=$(( box_w - ${#inp} - 3 ))
-    (( cursor_pad < 0 )) && cursor_pad=0
-    printf '\e[48;5;236m\e[38;5;220m :%s\e[38;5;51m_\e[0m\e[48;5;236m%-*s\e[0m' \
-      "$inp" "$cursor_pad" ""
-
-    # Separator
-    _at $(( box_r+2 )) "$box_c"
-    printf '\e[48;5;234m\e[38;5;238m%-*s\e[0m' "$box_w" \
-      "$(printf '%*s' "$box_w" '' | tr ' ' '-')"
-
-    # Matching entries
-    local row=$(( box_r+3 ))
-    local matches=0
-    local ak
-    for ak in "${KX_ALIAS_DISPLAY[@]}"; do
-      local target="${KX_ALIASES[$ak]:-}"
-      [[ -z "$target" ]] && continue
-
-      # Show all when empty input, or filter by prefix
-      if [[ -z "$inp" || "$ak" == "$inp"* || "$target" == "$inp"* ]]; then
-        (( row >= box_r+box_h-1 )) && break
-        _at "$row" "$box_c"
-        if [[ -n "$inp" && ( "$ak" == "$inp"* || "$target" == "$inp"* ) ]]; then
-          printf '\e[48;5;234m \e[38;5;51m\e[1m%-10s\e[0m\e[48;5;234m\e[38;5;248m → %-15s\e[0m' \
-            "$ak" "$target"
-        else
-          printf '\e[48;5;234m \e[38;5;240m%-10s → %-15s\e[0m' "$ak" "$target"
-        fi
-        _eol
-        (( row++ )); (( matches++ ))
-      fi
-    done
-
-    if (( matches == 0 )); then
-      _at $(( box_r+3 )) "$box_c"
-      printf '\e[48;5;234m \e[38;5;196m no match for "%s"\e[0m' "$inp"
-    fi
-
-    # Bottom hint
-    _at $(( box_r+box_h-1 )) "$box_c"
-    printf '\e[48;5;234m\e[38;5;240m %-*s\e[0m' $(( box_w-1 )) \
-      "Enter=go  Esc/:=cancel  type to filter"
-  }
-
-  _draw_palette "$input"
+  _draw_palette "$input" "$box_r" "$box_c" "$box_w" "$box_h"
   _drain_input
 
   while true; do
@@ -2414,28 +2652,24 @@ _command_palette() {
       $'\x1b')
         local seq=""; read -rsn2 -t 0.15 seq || seq=""
         _drain_input
-        # ESC or any escape sequence — cancel
         return
         ;;
       ':')
-        # Second colon cancels
         return
         ;;
       $'\x7f'|$'\b')
         [[ -n "$input" ]] && input="${input%?}"
         ;;
       '')
-        # Enter — find best match and switch
         local target=""
-        # Exact alias match first
         if [[ -n "${KX_ALIASES[$input]:-}" ]]; then
           target="${KX_ALIASES[$input]}"
         else
-          # Prefix match — pick first
           local ak
           for ak in "${KX_ALIAS_DISPLAY[@]}"; do
             local t="${KX_ALIASES[$ak]:-}"
-            if [[ -n "$t" && ( "$ak" == "$input"* || "$t" == "$input"* ) ]]; then
+            local lb="${KX_LABELS[$ak]:-}"
+            if [[ -n "$t" && ( "$ak" == "$input"* || "$t" == "$input"* || "${lb,,}" == "${input,,}"* ) ]]; then
               target="$t"
               break
             fi
@@ -2452,7 +2686,7 @@ _command_palette() {
         fi
         ;;
     esac
-    _draw_palette "$input"
+    _draw_palette "$input" "$box_r" "$box_c" "$box_w" "$box_h"
   done
 }
 
@@ -2677,13 +2911,17 @@ _pager_text() {
 }
 
 _render_view() {
-  # Only fetch data on first load of a view (LAST_REFRESH==0)
-  # All other refreshes are manual via R
-  if (( LAST_REFRESH == 0 )); then
+  local now
+  now=$(date +%s)
+
+  # Fetch if: first load, OR watch mode is on and interval has elapsed
+  if (( LAST_REFRESH == 0 )) || \
+     ( $WATCH_MODE && (( now - LAST_REFRESH >= REFRESH_INTERVAL )) ); then
     _refresh_data
   fi
 
   _clear
+  _clamp_scroll
   _draw_header
   _draw_tabs
 
@@ -2722,14 +2960,17 @@ _main_loop() {
     # Drain any buffered input before blocking
     _drain_input
 
-    # Block waiting for a keypress. Use a long timeout (60s) purely as
-    # a keepalive — on timeout we just re-render (clock update) but
-    # NEVER auto-refresh data. Data only refreshes on R or view switch.
+    # Timeout depends on watch mode:
+    # - watch mode on: short timeout so we re-render and re-fetch on schedule
+    # - watch mode off: long keepalive just to update the clock
+    local _timeout=60
+    $WATCH_MODE && _timeout=$REFRESH_INTERVAL
+
     local key=""
     local _read_rc=0
-    IFS= read -rsn1 -t 60 key || _read_rc=$?
+    IFS= read -rsn1 -t "$_timeout" key || _read_rc=$?
 
-    # Timeout (rc=1) — just re-render to update the clock, no data fetch
+    # Timeout — just loop to re-render (watch mode will trigger fetch in _render_view)
     (( _read_rc > 0 )) && continue
 
     case "$key" in
@@ -2917,6 +3158,11 @@ _main_loop() {
 
       # ── Exec ──────────────────────────────────────────────
       e|E)
+        if $READONLY; then
+          _at $(( TERM_ROWS/2 )) $(( TERM_COLS/2 - 15 ))
+          printf '%b  read-only mode — exec disabled  %b' "$C_YELLOW" "$C_RESET"
+          sleep 1; continue
+        fi
         if [[ "$CURRENT_VIEW" == "pods" ]]; then
           local pod ns
           pod=$(_selected_pod_name) && ns=$(_selected_pod_ns) && \
@@ -2950,6 +3196,11 @@ _main_loop() {
 
       # ── Rolling restart ───────────────────────────────────
       r)
+        if $READONLY; then
+          _at $(( TERM_ROWS/2 )) $(( TERM_COLS/2 - 15 ))
+          printf '%b  read-only mode — restart disabled  %b' "$C_YELLOW" "$C_RESET"
+          sleep 1; continue
+        fi
         if [[ "$CURRENT_VIEW" == "deploys" ]]; then
           local line; line=$(_selected_line) || continue
           IFS=$'\t' read -r ns name _ <<< "$line"
@@ -2960,6 +3211,11 @@ _main_loop() {
 
       # ── Delete ────────────────────────────────────────────
       D)
+        if $READONLY; then
+          _at $(( TERM_ROWS/2 )) $(( TERM_COLS/2 - 15 ))
+          printf '%b  read-only mode — delete disabled  %b' "$C_YELLOW" "$C_RESET"
+          sleep 1; continue
+        fi
         local line; line=$(_selected_line) || continue
         IFS=$'\t' read -r ns name _ <<< "$line"
         local res="pod"
@@ -2970,7 +3226,12 @@ _main_loop() {
       # ── Filter ────────────────────────────────────────────
       '/')
         _input_filter
-        SELECTED_IDX=0
+        # Clamp selection to filtered result count
+        local _fc=0
+        mapfile -t _tmp < <(_filtered_lines)
+        _fc=${#_tmp[@]}
+        (( _fc == 0 )) && SELECTED_IDX=0
+        (( SELECTED_IDX >= _fc && _fc > 0 )) && SELECTED_IDX=$(( _fc - 1 ))
         ;;
 
       # ── kubectl top ───────────────────────────────────────
@@ -3017,11 +3278,15 @@ _main_loop() {
         _clear; DETAIL_MODE=false
         ;;
 
-      # ── Follow logs toggle ────────────────────────────────
-      L)
-        $LOG_FOLLOW && LOG_FOLLOW=false || LOG_FOLLOW=true
+      # ── Watch mode toggle ─────────────────────────────────
+      w|W)
+        if $WATCH_MODE; then
+          WATCH_MODE=false
+        else
+          WATCH_MODE=true
+          LAST_REFRESH=0   # immediate fetch when enabling
+        fi
         ;;
-
       # ── Force refresh ─────────────────────────────────────
       R)
         # Invalidate cache for current view only
@@ -3041,14 +3306,92 @@ _main_loop() {
 # ── Bootstrap ─────────────────────────────────────────────
 
 _bootstrap() {
-  # Check kubectl
-  command -v kubectl &>/dev/null || {
-    echo "Error: kubectl not found" >&2
+  # ── Environment checks ────────────────────────────────────
+
+  # Bash version — requires 4+ for associative arrays, mapfile, etc.
+  if (( BASH_VERSINFO[0] < 4 )); then
+    echo ""
+    echo "  ✗ kube-dash requires bash 4 or newer."
+    echo "    You have: bash $BASH_VERSION"
+    echo ""
+    echo "  macOS fix:  brew install bash"
+    echo "              then run as: /usr/local/bin/bash kube-dash"
+    echo ""
     exit 1
-  }
+  fi
+
+  # stty cbreak — required for single-keypress TUI input.
+  # Fails on Git Bash (MINGW) and some restricted environments.
+  if ! stty cbreak 2>/dev/null; then
+    echo ""
+    echo "  ✗ kube-dash requires stty cbreak support."
+    echo "    Your terminal does not support it."
+    echo ""
+    echo "  Git Bash is not supported — use WSL2 or a native Linux terminal."
+    echo ""
+    stty sane 2>/dev/null
+    exit 1
+  fi
+  stty sane 2>/dev/null  # restore after test
+
+  # tput — needed for cursor control and screen management
+  if ! tput cols &>/dev/null; then
+    echo ""
+    echo "  ✗ kube-dash requires tput (ncurses)."
+    echo "    Install ncurses and ensure TERM is set."
+    echo ""
+    exit 1
+  fi
+
+  # kubectl — required
+  if ! command -v kubectl &>/dev/null; then
+    echo ""
+    echo "  ✗ kubectl not found in PATH."
+    echo "    Install kubectl: https://kubernetes.io/docs/tasks/tools/"
+    echo ""
+    exit 1
+  fi
+
+  # ── Soft warnings (non-fatal) ─────────────────────────────
+  local warnings=()
+
+  # python3 — used for events and configmaps parsing; awk fallback exists
+  command -v python3 &>/dev/null || \
+    warnings+=("  ⚠  python3 not found — events and configmaps may show limited data (awk fallback active)")
+
+  # helm — only needed for helm view
+  command -v helm &>/dev/null || \
+    warnings+=("  ⚠  helm not found — helm releases view will be unavailable")
+
+  # TERM variable — bad or missing TERM causes tput failures
+  if [[ -z "${TERM:-}" || "$TERM" == "dumb" ]]; then
+    warnings+=("  ⚠  TERM is '${TERM:-unset}' — colors and cursor control may not work")
+  fi
+
+  # Terminal size sanity — very small terminals look broken
+  local cols rows
+  cols=$(tput cols 2>/dev/null || echo 0)
+  rows=$(tput lines 2>/dev/null || echo 0)
+  if (( cols < 80 || rows < 24 )); then
+    warnings+=("  ⚠  Terminal is ${cols}×${rows} — recommended minimum is 80×24")
+  fi
+
+  # Show warnings with a brief pause so user sees them
+  if (( ${#warnings[@]} > 0 )); then
+    echo ""
+    echo "  kube-dash v${VERSION} — starting with warnings:"
+    echo ""
+    for w in "${warnings[@]}"; do
+      echo "$w"
+    done
+    echo ""
+    echo "  Press Enter to continue or Ctrl-C to abort..."
+    read -r
+  fi
+
+  # ── Startup ───────────────────────────────────────────────
 
   # Default to all namespaces on startup — k9s behaviour
-  # User can scope with n picker or -n flag
   CURRENT_CTX=$(kubectl config current-context 2>/dev/null || echo "none")
   CURRENT_NS="all"
 
@@ -3063,10 +3406,11 @@ _bootstrap() {
       --help|-h)
         cat <<EOF
 Usage: kube-dash [options]
-  -n, --namespace <ns>    Start in namespace
+  -n, --namespace <ns>    Start in namespace (default: all)
   --context <ctx>         Use context
-  --interval <secs>       Refresh interval (default: 5)
+  --interval <secs>       Watch mode refresh interval (default: 5)
   -v, --view <view>       Start view: pods|deploys|nodes|events|argocd|certs
+  --readonly              Disable destructive actions (delete, restart, exec)
   --help                  This help
 EOF
         exit 0 ;;
