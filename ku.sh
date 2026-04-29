@@ -62,7 +62,8 @@ SEL_RST=$'\e[39m'
 # ── State ──────────────────────────────────────────────────
 CURRENT_NS="default"
 CURRENT_CTX=""
-CURRENT_VIEW="pods"     # pods | deploys | nodes | events | argocd | certs
+CURRENT_VIEW="pods"     # pods | deploys | nodes | events | argocd | certs | generic
+GENERIC_RESOURCE=""    # set when CURRENT_VIEW=generic, e.g. "applications"
 SELECTED_IDX=0
 SCROLL_OFFSET=0         # first visible row in current view
 FILTER=""
@@ -226,7 +227,7 @@ _draw_tabs() {
     cronjobs)   view_label="CronJobs"    ;;
     hpa)        view_label="HPA"         ;;
     namespaces) view_label="Namespaces"  ;;
-    *)          view_label="$CURRENT_VIEW" ;;
+    generic)    view_label="${GENERIC_RESOURCE:-generic}" ;;
   esac
 
   # Active view highlighted
@@ -794,6 +795,69 @@ _fetch_namespaces() {
   )
 }
 
+_fetch_generic() {
+  local resource="$GENERIC_RESOURCE"
+  local ns_flag
+  [[ "$CURRENT_NS" == "all" ]] && ns_flag="-A" || ns_flag="-n $CURRENT_NS"
+  # nodes and namespaces are cluster-scoped
+  [[ "$resource" == "nodes" || "$resource" == "namespaces" || "$resource" == "crds" ]] && ns_flag=""
+
+  mapfile -t DATA_LINES < <(
+    kubectl get "$resource" $ns_flag \
+      --no-headers \
+      -o wide \
+      2>/dev/null \
+    | awk '{
+        # Prefix each line with the resource name for context
+        $1=$1  # trim leading whitespace
+        print
+      }'
+  )
+}
+
+_render_generic() {
+  local start_row=4
+  TERM_COLS=$(tput cols 2>/dev/null || echo 120)
+
+  # Title shows resource type
+  _at $start_row 1
+  printf '%b%b %-s%b' "$C_BOLD" "$C_DCYAN" \
+    "$(echo "$GENERIC_RESOURCE" | tr '[:lower:]' '[:upper:]')  (kubectl get $GENERIC_RESOURCE${CURRENT_NS:+ -n $CURRENT_NS})" \
+    "$C_RESET"
+  _eol
+  _hline $(( start_row+1 )) 1 "$TERM_COLS" "-" "$C_GRAY"
+
+  local row=$(( start_row+2 ))
+  local filtered=()
+  mapfile -t filtered < <(_filtered_lines)
+  local _vis=$(( TERM_ROWS - 4 - start_row ))
+  local _end=$(( SCROLL_OFFSET + _vis ))
+  (( _end > ${#filtered[@]} )) && _end=${#filtered[@]}
+
+  local idx
+  for (( idx=SCROLL_OFFSET; idx<_end; idx++ )); do
+    local line="${filtered[$idx]}"
+    (( row > TERM_ROWS - 4 )) && break
+    _at "$row" 1
+    local _rsel="" _rrst="$C_RESET"
+    if (( idx == SELECTED_IDX )); then
+      printf '%b' "$BG_SEL"
+      _rsel="$BG_SEL"
+      _rrst="$SEL_RST$BG_SEL"
+    fi
+    printf ' %b%s%b' "$C_WHITE" "${line:0:$(( TERM_COLS - 2 ))}" "$C_RESET"
+    printf '%b' "$_rrst"; _eol; printf '%b' "$C_RESET"
+    (( row++ ))
+  done
+
+  if (( ${#filtered[@]} == 0 )); then
+    _at $(( start_row+4 )) $(( TERM_COLS/2-12 ))
+    printf '%bNo %s found%b' "$C_GRAY" "$GENERIC_RESOURCE" "$C_RESET"
+  fi
+  _at $(( TERM_ROWS-2 )) 2
+  printf '%b%d %s%b' "$C_LGRAY" "${#filtered[@]}" "$GENERIC_RESOURCE" "$C_RESET"
+}
+
 _refresh_data() {
   case "$CURRENT_VIEW" in
     pods)       _fetch_pods       ;;
@@ -812,6 +876,7 @@ _refresh_data() {
     cronjobs)   _fetch_cronjobs   ;;
     hpa)        _fetch_hpa        ;;
     namespaces) _fetch_namespaces ;;
+    generic)    _fetch_generic    ;;
   esac
   LAST_REFRESH=$(date +%s)
   VIEW_LOADED["${CURRENT_VIEW}:${CURRENT_NS}"]=1
@@ -2538,47 +2603,44 @@ _switch_view() {
     VIEW_LOADED[$load_key]=1
   fi
 }
+# Palette aliases → kubectl resource type (used for generic fetch)
+# The rich pre-built views are still on 1-9 keys
 declare -A KX_ALIASES=(
-  [po]="pods"         [pod]="pods"         [pods]="pods"
-  [dep]="deploys"     [deploy]="deploys"   [deploys]="deploys"   [deployment]="deploys"
-  [no]="nodes"        [node]="nodes"       [nodes]="nodes"
-  [ev]="events"       [event]="events"     [events]="events"
-  [app]="argocd"      [apps]="argocd"      [argocd]="argocd"
-  [cert]="certs"      [certs]="certs"      [certificate]="certs"
-  [sec]="secrets"     [secret]="secrets"   [secrets]="secrets"
-  [svc]="services"    [service]="services" [services]="services"
-  [helm]="helm"       [hr]="helm"
-  [cm]="configmaps"   [configmap]="configmaps" [configmaps]="configmaps"
-  [pvc]="pvcs"        [pvcs]="pvcs"
-  [ing]="ingresses"   [ingress]="ingresses" [ingresses]="ingresses"
-  [job]="jobs"        [jobs]="jobs"
-  [cj]="cronjobs"     [cronjob]="cronjobs" [cronjobs]="cronjobs"
-  [ns]="namespaces"   [namespace]="namespaces" [namespaces]="namespaces"
-  [hpa]="hpa"         [autoscaler]="hpa"
+  [po]="pods"              [pod]="pods"            [pods]="pods"
+  [dep]="deployments"      [deploy]="deployments"  [deploys]="deployments"  [deployment]="deployments"
+  [no]="nodes"             [node]="nodes"           [nodes]="nodes"
+  [ev]="events"            [event]="events"         [events]="events"
+  [app]="applications"     [apps]="applications"    [application]="applications"
+  [cert]="certificates"    [certs]="certificates"   [certificate]="certificates"
+  [sec]="secrets"          [secret]="secrets"       [secrets]="secrets"
+  [svc]="services"         [service]="services"     [services]="services"
+  [cm]="configmaps"        [configmap]="configmaps" [configmaps]="configmaps"
+  [pvc]="persistentvolumeclaims" [pvcs]="persistentvolumeclaims"
+  [ing]="ingresses"        [ingress]="ingresses"    [ingresses]="ingresses"
+  [job]="jobs"             [jobs]="jobs"
+  [cj]="cronjobs"          [cronjob]="cronjobs"     [cronjobs]="cronjobs"
+  [ns]="namespaces"        [namespace]="namespaces" [namespaces]="namespaces"
+  [hpa]="horizontalpodautoscalers"
+  [rs]="replicasets"       [replicaset]="replicasets"
+  [sts]="statefulsets"     [statefulset]="statefulsets"
+  [ds]="daemonsets"        [daemonset]="daemonsets"
+  [sa]="serviceaccounts"   [serviceaccount]="serviceaccounts"
+  [rb]="rolebindings"      [role]="roles"
+  [crd]="crds"
 )
 
-# Friendly labels shown in the palette (what the user sees)
+# Display order and labels for the palette suggestions
 declare -A KX_LABELS=(
-  [po]="Pods"
-  [dep]="Deployments"
-  [no]="Nodes"
-  [ev]="Events"
-  [app]="ArgoCD Applications"
-  [cert]="Certificates"
-  [sec]="Secrets"
-  [svc]="Services"
-  [helm]="Helm Releases"
-  [cm]="ConfigMaps"
-  [pvc]="PersistentVolumeClaims"
-  [ing]="Ingresses"
-  [job]="Jobs"
-  [cj]="CronJobs"
-  [hpa]="HorizontalPodAutoscalers"
-  [ns]="Namespaces"
+  [po]="pods"               [dep]="deployments"      [no]="nodes"
+  [ev]="events"             [app]="applications"     [cert]="certificates"
+  [sec]="secrets"           [svc]="services"         [cm]="configmaps"
+  [pvc]="persistentvolumeclaims" [ing]="ingresses"   [job]="jobs"
+  [cj]="cronjobs"           [ns]="namespaces"        [hpa]="horizontalpodautoscalers"
+  [rs]="replicasets"        [sts]="statefulsets"     [ds]="daemonsets"
+  [sa]="serviceaccounts"    [rb]="rolebindings"      [crd]="crds"
 )
 
-# Display order for the palette list
-KX_ALIAS_DISPLAY=(po dep no ev app cert sec svc helm cm pvc ing job cj hpa ns)
+KX_ALIAS_DISPLAY=(po dep no ev app cert sec svc cm pvc ing job cj hpa ns rs sts ds sa rb crd)
 _draw_palette() {
   local inp="$1" br="$2" bc="$3" bw="$4" bh="$5"
   local r
@@ -2661,23 +2723,43 @@ _command_palette() {
         [[ -n "$input" ]] && input="${input%?}"
         ;;
       '')
-        local target=""
+        # Resolve input to a resource
+        local resource=""
         if [[ -n "${KX_ALIASES[$input]:-}" ]]; then
-          target="${KX_ALIASES[$input]}"
-        else
-          local ak
-          for ak in "${KX_ALIAS_DISPLAY[@]}"; do
-            local t="${KX_ALIASES[$ak]:-}"
-            local lb="${KX_LABELS[$ak]:-}"
-            if [[ -n "$t" && ( "$ak" == "$input"* || "$t" == "$input"* || "${lb,,}" == "${input,,}"* ) ]]; then
-              target="$t"
-              break
+          resource="${KX_ALIASES[$input]}"
+        elif [[ -n "$input" ]]; then
+          resource="$input"
+        fi
+
+        # Map well-known resources to rich pre-built views
+        # Everything else goes to the generic kubectl view
+        case "$resource" in
+          pods)                    _switch_view "pods"       ;;
+          deployments)             _switch_view "deploys"    ;;
+          nodes)                   _switch_view "nodes"      ;;
+          events)                  _switch_view "events"     ;;
+          secrets)                 _switch_view "secrets"    ;;
+          services)                _switch_view "services"   ;;
+          configmaps)              _switch_view "configmaps" ;;
+          persistentvolumeclaims)  _switch_view "pvcs"       ;;
+          ingresses)               _switch_view "ingresses"  ;;
+          jobs)                    _switch_view "jobs"       ;;
+          cronjobs)                _switch_view "cronjobs"   ;;
+          horizontalpodautoscalers) _switch_view "hpa"       ;;
+          namespaces)              _switch_view "namespaces" ;;
+          *)
+            if [[ -n "$resource" ]]; then
+              GENERIC_RESOURCE="$resource"
+              CURRENT_VIEW="generic"
+              SELECTED_IDX=0
+              SCROLL_OFFSET=0
+              FILTER=""
+              DETAIL_MODE=false
+              WATCH_MODE=false
+              LAST_REFRESH=0
             fi
-          done
-        fi
-        if [[ -n "$target" ]]; then
-          _switch_view "$target"
-        fi
+            ;;
+        esac
         return
         ;;
       *)
@@ -2942,6 +3024,7 @@ _render_view() {
     cronjobs)   _render_cronjobs   ;;
     hpa)        _render_hpa        ;;
     namespaces) _render_namespaces ;;
+    generic)    _render_generic    ;;
   esac
 
   _draw_statusbar
@@ -3100,12 +3183,22 @@ _main_loop() {
         [[ "$CURRENT_VIEW" == "jobs"       ]] && res="job"
         [[ "$CURRENT_VIEW" == "cronjobs"   ]] && res="cronjob"
         [[ "$CURRENT_VIEW" == "hpa"        ]] && res="horizontalpodautoscaler"
+        [[ "$CURRENT_VIEW" == "generic"    ]] && res="$GENERIC_RESOURCE"
 
-        # Nodes have no namespace column — name is field 1
+        # Nodes and generic have no namespace column or different layout
         if [[ "$CURRENT_VIEW" == "nodes" ]]; then
           IFS=$'\t' read -r name _ <<< "$line"
           ns="default"
           res="node"
+        elif [[ "$CURRENT_VIEW" == "generic" ]]; then
+          # kubectl -o wide output: NAME ... (no namespace prefix unless -A)
+          # With -A: NAMESPACE NAME ...
+          if [[ "$CURRENT_NS" == "all" ]]; then
+            read -r ns name _ <<< "$line"
+          else
+            read -r name _ <<< "$line"
+            ns="$CURRENT_NS"
+          fi
         fi
         [[ "$CURRENT_VIEW" == "helm"     ]] && {
           IFS=$'\t' read -r helm_name helm_ns helm_rev helm_status helm_chart helm_appver <<< "$line"
