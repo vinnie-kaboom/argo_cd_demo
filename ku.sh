@@ -2502,7 +2502,7 @@ _show_help() {
   _help_row "n"            "Pick namespace"
   _help_row "C"            "Pick context"
   _help_row "/"            "Filter current view"
-  _help_row "Esc"          "Clear filter"
+  _help_row "Esc"          "Back to Pods (or clear filter in Pods)"
 
   _help_section "Actions (Pods)"
   _help_row "l"            "Logs"
@@ -3105,8 +3105,10 @@ _main_loop() {
           "[B"|"[C") # Down / right arrow
             (( SELECTED_IDX < count-1 )) && (( SELECTED_IDX++ ))
             ;;
-          "") # Plain ESC — clear filter or back
-            if [[ -n "$FILTER" ]]; then
+          "") # Plain ESC — return to Pods, or clear filter if already there
+            if [[ "$CURRENT_VIEW" != "pods" ]]; then
+              _switch_view "pods"
+            elif [[ -n "$FILTER" ]]; then
               FILTER=""
             fi
             ;;
