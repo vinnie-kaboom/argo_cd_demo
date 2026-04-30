@@ -3445,43 +3445,6 @@ _bootstrap() {
     exit 1
   fi
 
-  # ── Soft warnings (non-fatal) ─────────────────────────────
-  local warnings=()
-
-  # python3 — used for events and configmaps parsing; awk fallback exists
-  command -v python3 &>/dev/null || \
-    warnings+=("  ⚠  python3 not found — events and configmaps may show limited data (awk fallback active)")
-
-  # helm — only needed for helm view
-  command -v helm &>/dev/null || \
-    warnings+=("  ⚠  helm not found — helm releases view will be unavailable")
-
-  # TERM variable — bad or missing TERM causes tput failures
-  if [[ -z "${TERM:-}" || "$TERM" == "dumb" ]]; then
-    warnings+=("  ⚠  TERM is '${TERM:-unset}' — colors and cursor control may not work")
-  fi
-
-  # Terminal size sanity — very small terminals look broken
-  local cols rows
-  cols=$(tput cols 2>/dev/null || echo 0)
-  rows=$(tput lines 2>/dev/null || echo 0)
-  if (( cols < 80 || rows < 24 )); then
-    warnings+=("  ⚠  Terminal is ${cols}×${rows} — recommended minimum is 80×24")
-  fi
-
-  # Show warnings with a brief pause so user sees them
-  if (( ${#warnings[@]} > 0 )); then
-    echo ""
-    echo "  kube-dash v${VERSION} — starting with warnings:"
-    echo ""
-    for w in "${warnings[@]}"; do
-      echo "$w"
-    done
-    echo ""
-    echo "  Press Enter to continue or Ctrl-C to abort..."
-    read -r
-  fi
-
   # ── Startup ───────────────────────────────────────────────
 
   # Default to all namespaces on startup — k9s behaviour
