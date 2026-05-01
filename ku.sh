@@ -234,12 +234,18 @@ _draw_tabs() {
   printf '\e[48;5;235m \e[0m\e[48;5;51m\e[38;5;232m\e[1m %s \e[0m\e[48;5;235m' "$view_label"
   printf '\e[38;5;240m|\e[0m\e[48;5;235m'
 
-  # Hint
-  printf '\e[38;5;240m press \e[38;5;51m:\e[38;5;240m to switch view\e[0m\e[48;5;235m'
+  # Hint (always present, k9s-like compact wording on narrow widths)
+  if (( TERM_COLS < 95 )); then
+    printf '\e[38;5;240m  \e[38;5;51m|\e[38;5;240m : view\e[0m\e[48;5;235m'
+  else
+    printf '\e[38;5;240m press \e[38;5;51m:\e[38;5;240m to switch view\e[0m\e[48;5;235m'
+  fi
 
   # Filter indicator
   if [[ -n "$FILTER" ]]; then
-    printf '  \e[38;5;220m/%s\e[0m\e[48;5;235m' "$FILTER"
+    local filter_disp="$FILTER"
+    (( ${#filter_disp} > 20 )) && filter_disp="${filter_disp:0:17}..."
+    printf '  \e[38;5;220m/%s\e[0m\e[48;5;235m' "$filter_disp"
   fi
 
   # Staleness / watch mode indicator
@@ -250,10 +256,10 @@ _draw_tabs() {
   if $WATCH_MODE; then
     # Pulse between two states using elapsed seconds for a blink effect
     if (( elapsed % 2 == 0 )); then
-      stale_str=" ● WATCH ${REFRESH_INTERVAL}s"
+      stale_str=" WATCH ${REFRESH_INTERVAL}s"
       stale_color='\e[38;5;208m'   # orange — bright
     else
-      stale_str=" ○ WATCH ${REFRESH_INTERVAL}s"
+      stale_str=" watch ${REFRESH_INTERVAL}s"
       stale_color='\e[38;5;130m'   # orange — dim
     fi
   elif (( LAST_REFRESH == 0 )); then
@@ -269,8 +275,20 @@ _draw_tabs() {
     stale_str=" stale $((elapsed/60))m — press R"
     stale_color='\e[38;5;196m'
   fi
+  # Keep right-side status visible without clobbering the left view label/hint.
+  if (( TERM_COLS < 110 )) && [[ "$stale_str" == *"press R"* ]]; then
+    stale_str=" stale $((elapsed/60))m"
+  fi
+  if (( TERM_COLS < 92 )) && [[ "$stale_str" == *"updated"* ]]; then
+    stale_str=" ${elapsed}s"
+  fi
+
   local stale_len=${#stale_str}
-  _at 2 $(( TERM_COLS - stale_len ))
+  (( stale_len > TERM_COLS - 2 )) && stale_str=" ${stale_str:0:$(( TERM_COLS - 3 ))}"
+  stale_len=${#stale_str}
+  local stale_col=$(( TERM_COLS - stale_len + 1 ))
+  (( stale_col < 26 )) && stale_col=26
+  _at 2 "$stale_col"
   printf '\e[48;5;235m%b%s\e[0m' "$stale_color" "$stale_str"
 }
 
@@ -295,62 +313,43 @@ _draw_statusbar() {
   local k="$C_CYAN" r="$C_RESET"
 
   if $DETAIL_MODE; then
-    # Inside describe pager
-    printf '%b[q]%b back  %b[↑↓/j/k]%b scroll  %b[g/G]%b top/bottom  %b[l]%b logs  %b[e]%b exec  %b[r]%b restart' \
-      "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
+    # Inside describe pager (avoid wrap on narrow terminals)
+    if (( TERM_COLS < 110 )); then
+      printf '%b[q]%b back  %b[↑↓/j/k]%b scroll  %b[g/G]%b top/btm' \
+        "$k" "$r" "$k" "$r" "$k" "$r"
+    else
+      printf '%b[q]%b back  %b[↑↓/j/k]%b scroll  %b[g/G]%b top/bottom  %b[l]%b logs  %b[e]%b exec  %b[r]%b restart' \
+        "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
+    fi
   else
-    # Always shown
-    local watch_hint=""
-    $WATCH_MODE && watch_hint="%b[w]%b watch:ON  " || watch_hint="%b[w]%b watch  "
+    # Main list footer (width-aware so line never wraps)
     local watch_color="$C_CYAN"
     $WATCH_MODE && watch_color="$C_ORANGE"
 
-    local always="$watch_hint%b[:]%b view  %b[↑↓/j/k]%b nav  %b[Enter]%b describe  %b[/]%b filter  %b[n]%b ns  %b[C]%b ctx  %b[R]%b refresh  %b[?]%b help  %b[q]%b quit"
-    local always_args=("$watch_color" "$C_RESET" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r")
-
-    # View-specific extras shown before the always block
-    local extras=""
-    local extra_args=()
-
-    case "$CURRENT_VIEW" in
-      pods)
-        extras="%b[l]%b logs  %b[e]%b exec  %b[v]%b prev-logs  %b[t]%b top  %b[f]%b fwd  %b[r]%b restart  %b[D]%b delete  "
-        extra_args=("$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$C_RED" "$r")
-        ;;
-      deploys)
-        extras="%b[r]%b restart  %b[D]%b delete  "
-        extra_args=("$k" "$r" "$C_RED" "$r")
-        ;;
-      nodes)
-        extras="%b[t]%b top  "
-        extra_args=("$k" "$r")
-        ;;
-      secrets)
-        extras="%b[x]%b decode  %b[D]%b delete  "
-        extra_args=("$k" "$r" "$C_RED" "$r")
-        ;;
-      services)
-        extras="%b[f]%b fwd  %b[D]%b delete  "
-        extra_args=("$k" "$r" "$C_RED" "$r")
-        ;;
-      namespaces)
-        extras="%b[Enter]%b scope+pods  "
-        extra_args=("$k" "$r")
-        ;;
-      configmaps|pvcs|ingresses|jobs|cronjobs|hpa|argocd|certs|helm)
-        extras="%b[D]%b delete  "
-        extra_args=("$C_RED" "$r")
-        ;;
-    esac
-
-    # Print extras first, then always
-    if [[ -n "$extras" ]]; then
-      # shellcheck disable=SC2059
-      printf "$extras" "${extra_args[@]}"
+    if (( TERM_COLS < 105 )); then
+      printf '%b[w]%b watch  %b[/]%b filter  %b[:]%b view  %b[n]%b ns  %b[C]%b ctx  %b[q]%b quit' \
+        "$watch_color" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
+    elif (( TERM_COLS < 140 )); then
+      if [[ "$CURRENT_VIEW" == "pods" ]]; then
+        printf '%b[l]%b logs  %b[e]%b exec  %b[r]%b restart  %b[D]%b delete  %b[/]%b filter  %b[:]%b view  %b[n]%b ns  %b[C]%b ctx  %b[q]%b quit' \
+          "$k" "$r" "$k" "$r" "$k" "$r" "$C_RED" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
+      else
+        printf '%b[w]%b watch  %b[↑↓/j/k]%b nav  %b[Enter]%b describe  %b[/]%b filter  %b[:]%b view  %b[n]%b ns  %b[q]%b quit' \
+          "$watch_color" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
+      fi
+    else
+      if [[ "$CURRENT_VIEW" == "pods" ]]; then
+        printf '%b[l]%b logs  %b[e]%b exec  %b[v]%b prev-logs  %b[t]%b top  %b[f]%b fwd  %b[r]%b restart  %b[D]%b delete  %b[w]%b watch  %b[:]%b view  %b[/]%b filter  %b[n]%b ns  %b[C]%b ctx  %b[R]%b refresh  %b[?]%b help  %b[q]%b quit' \
+          "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$C_RED" "$r" "$watch_color" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
+      else
+        printf '%b[w]%b watch  %b[:]%b view  %b[↑↓/j/k]%b nav  %b[Enter]%b describe  %b[/]%b filter  %b[n]%b ns  %b[C]%b ctx  %b[R]%b refresh  %b[?]%b help  %b[q]%b quit' \
+          "$watch_color" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
+      fi
     fi
-    # shellcheck disable=SC2059
-    printf "$always" "${always_args[@]}"
   fi
+
+  # Ensure rest of line is blank in case previous frame had longer text.
+  _eol
 }
 
 # ── Column header row ──────────────────────────────────────
@@ -387,6 +386,33 @@ _status_color() {
   esac
 }
 
+_human_age() {
+  local ts="$1"
+  [[ -z "$ts" || "$ts" == "<none>" ]] && { printf 'n/a'; return; }
+
+  local now epoch diff
+  now=$(date +%s)
+  epoch=$(date -d "$ts" +%s 2>/dev/null || true)
+
+  if [[ -z "$epoch" ]]; then
+    printf '%s' "${ts:0:10}"
+    return
+  fi
+
+  diff=$(( now - epoch ))
+  (( diff < 0 )) && diff=0
+
+  if (( diff < 60 )); then
+    printf '%ds' "$diff"
+  elif (( diff < 3600 )); then
+    printf '%dm' $(( diff / 60 ))
+  elif (( diff < 86400 )); then
+    printf '%dh' $(( diff / 3600 ))
+  else
+    printf '%dd' $(( diff / 86400 ))
+  fi
+}
+
 # ── Data fetchers ──────────────────────────────────────────
 
 _fetch_pods() {
@@ -416,6 +442,16 @@ _fetch_pods() {
       }' \
     | sort -k4,4
   )
+
+  # Convert RFC3339 timestamps to human ages (k9s-like: 45s/12m/3h/5d)
+  local i line ns name ready status restarts age node
+  local sep=$'\t'
+  for i in "${!DATA_LINES[@]}"; do
+    line="${DATA_LINES[$i]}"
+    IFS=$'\t' read -r ns name ready status restarts age node <<< "$line"
+    age=$(_human_age "$age")
+    DATA_LINES[$i]="${ns}${sep}${name}${sep}${ready}${sep}${status}${sep}${restarts}${sep}${age}${sep}${node}"
+  done
 }
 
 _fetch_deploys() {
@@ -441,9 +477,19 @@ _fetch_deploys() {
         status="OK"
         if (ready+0 < desired+0) status="Degraded"
         if (ready==desired && desired+0>0) status="Healthy"
-        printf "%s\t%s\t%s/%s\t%s\t%s\t%s\n", $1,$2,ready,desired,status,$5,$7
+        printf "%s\t%s\t%s/%s\t%s\t%s\n", $1,$2,ready,desired,status,$7
       }'
   )
+
+  # Convert RFC3339 timestamps to human ages (k9s-like: 45s/12m/3h/5d)
+  local i line ns name ready status age
+  local sep=$'\t'
+  for i in "${!DATA_LINES[@]}"; do
+    line="${DATA_LINES[$i]}"
+    IFS=$'\t' read -r ns name ready status age <<< "$line"
+    age=$(_human_age "$age")
+    DATA_LINES[$i]="${ns}${sep}${name}${sep}${ready}${sep}${status}${sep}${age}"
+  done
 }
 
 _fetch_nodes() {
@@ -898,18 +944,61 @@ _filtered_lines() {
 
 _render_pods() {
   local start_row=4
-  local max_rows=$(( TERM_ROWS - start_row - 1 ))
   TERM_COLS=$(tput cols 2>/dev/null || echo 120)
 
-  # Column widths
-  local w_ns=14 w_name=36 w_ready=7 w_status=18 w_restarts=9 w_age=10 w_node=20
+  # Responsive columns to avoid line wrap while keeping NODE visible when possible.
+  local w_ns=14 w_name=36 w_ready=7 w_status=16 w_restarts=8 w_age=6 w_node=24
+  local show_node=true
+
+  if (( TERM_COLS < 140 )); then
+    w_ns=12
+    w_name=30
+    w_status=14
+    w_node=18
+  fi
+  if (( TERM_COLS < 118 )); then
+    w_ns=10
+    w_name=24
+    w_ready=6
+    w_status=12
+    w_restarts=6
+    w_age=5
+    w_node=14
+  fi
+  if (( TERM_COLS < 98 )); then
+    w_ns=9
+    w_name=18
+    w_ready=5
+    w_status=10
+    w_restarts=5
+    w_age=4
+    w_node=12
+  fi
+  if (( TERM_COLS < 86 )); then
+    # Very narrow terminals: drop NODE only as a last resort.
+    show_node=false
+    w_ns=8
+    w_name=18
+    w_ready=5
+    w_status=9
+    w_restarts=4
+    w_age=4
+  fi
 
   _at $start_row 1
-  printf '%b%b %-*s %-*s %-*s %-*s %-*s %-*s %-*s%b' \
-    "$C_BOLD" "$C_DCYAN" \
-    "$w_ns" "NAMESPACE" "$w_name" "NAME" "$w_ready" "READY" \
-    "$w_status" "STATUS" "$w_restarts" "RESTARTS" "$w_age" "AGE" "$w_node" "NODE" \
-    "$C_RESET"
+  if $show_node; then
+    printf '%b%b %-*s %-*s %-*s %-*s %-*s %-*s %-*s%b' \
+      "$C_BOLD" "$C_DCYAN" \
+      "$w_ns" "NAMESPACE" "$w_name" "NAME" "$w_ready" "READY" \
+      "$w_status" "STATUS" "$w_restarts" "RESTARTS" "$w_age" "AGE" "$w_node" "NODE" \
+      "$C_RESET"
+  else
+    printf '%b%b %-*s %-*s %-*s %-*s %-*s %-*s%b' \
+      "$C_BOLD" "$C_DCYAN" \
+      "$w_ns" "NAMESPACE" "$w_name" "NAME" "$w_ready" "READY" \
+      "$w_status" "STATUS" "$w_restarts" "RESTARTS" "$w_age" "AGE" \
+      "$C_RESET"
+  fi
   _eol
 
   _hline $(( start_row+1 )) 1 "$TERM_COLS" "-" "$C_GRAY"
@@ -933,7 +1022,7 @@ _render_pods() {
     local sc
     sc=$(_status_color "$status")
 
-    _at "$row" 1
+    _at "$row" 1; _eol; _at "$row" 1
     local _rsel="" _rrst="$C_RESET"
     if (( idx == SELECTED_IDX )); then
       printf '%b' "$BG_SEL"
@@ -942,16 +1031,28 @@ _render_pods() {
     fi
 
     local _restart_color="$C_LGRAY"
-    (( ${restarts:-0} > 5 )) && _restart_color="$C_RED"
+    local _restarts_num="${restarts//[^0-9]/}"
+    _restarts_num="${_restarts_num:-0}"
+    (( _restarts_num > 5 )) && _restart_color="$C_RED"
 
-    printf ' %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b %-*s %-*s' \
-      "$C_GRAY"        "$w_ns"       "$ns" \
-      "$_rrst"         "$C_WHITE"    "$w_name"     "${name:0:$w_name}" \
-      "$_rrst"         "$C_GREEN"    "$w_ready"    "$ready" \
-      "$_rrst"         "$sc"         "$w_status"   "$status" \
-      "$_rrst"         "$_restart_color" "$w_restarts" "${restarts:-0}" \
-      "$_rrst"         "$w_age"      "${age:0:$w_age}" \
-                       "$w_node"     "${node:0:$w_node}"
+    if $show_node; then
+      printf ' %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b %-*s %-*s' \
+        "$C_GRAY"        "$w_ns"       "${ns:0:$w_ns}" \
+        "$_rrst"         "$C_WHITE"    "$w_name"     "${name:0:$w_name}" \
+        "$_rrst"         "$C_GREEN"    "$w_ready"    "${ready:0:$w_ready}" \
+        "$_rrst"         "$sc"         "$w_status"   "${status:0:$w_status}" \
+        "$_rrst"         "$_restart_color" "$w_restarts" "${restarts:0:$w_restarts}" \
+        "$_rrst"         "$w_age"      "${age:0:$w_age}" \
+                         "$w_node"     "${node:0:$w_node}"
+    else
+      printf ' %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b %-*s' \
+        "$C_GRAY"        "$w_ns"       "${ns:0:$w_ns}" \
+        "$_rrst"         "$C_WHITE"    "$w_name"     "${name:0:$w_name}" \
+        "$_rrst"         "$C_GREEN"    "$w_ready"    "${ready:0:$w_ready}" \
+        "$_rrst"         "$sc"         "$w_status"   "${status:0:$w_status}" \
+        "$_rrst"         "$_restart_color" "$w_restarts" "${restarts:0:$w_restarts}" \
+        "$_rrst"         "$w_age"      "${age:0:$w_age}"
+    fi
 
     printf '%b' "$_rrst"; _eol; printf '%b' "$C_RESET"
     (( row++ ))
@@ -997,7 +1098,7 @@ _render_deploys() {
   for (( idx=SCROLL_OFFSET; idx<_end; idx++ )); do
     local line="${filtered[$idx]}"
     (( row > TERM_ROWS - 4 )) && break
-    IFS=$'\t' read -r ns name ready status replicas rollout age <<< "$line"
+    IFS=$'\t' read -r ns name ready status age <<< "$line"
     local sc; sc=$(_status_color "$status")
 
     _at "$row" 1
@@ -2202,7 +2303,7 @@ _show_logs() {
   local container_flag=""
   [[ -n "$container" ]] && container_flag="-c $container"
 
-  # Fetch logs into DATA_LINES array
+  # Fetch logs into a local buffer so we do not clobber list view data
   _clear
   _at 1 1
   printf '%b%b kube-dash › logs › %s %b' "$BG_HDR" "$C_CYAN" "$pod" "$C_RESET"
@@ -2213,7 +2314,8 @@ _show_logs() {
 
   # Capture logs into array
   local tail_lines=200
-  mapfile -t DATA_LINES < <(
+  local LOG_LINES=()
+  mapfile -t LOG_LINES < <(
     kubectl logs --tail=$tail_lines $container_flag "$pod" -n "$ns" 2>&1
   )
 
@@ -2227,7 +2329,7 @@ _show_logs() {
     printf '%b%b kube-dash › logs › %s %b' "$BG_HDR" "$C_CYAN" "$pod" "$C_RESET"
     _eol
     _at 2 1
-    printf '%b%b[q]%b back  %b[↑↓/j/k]%b scroll  %b[/]%b filter  %b[g]%b top  %b[G]%b bottom%b' \
+    printf '%b%b[Esc]%b back  %b[↑↓/j/k]%b scroll  %b[/]%b filter  %b[g]%b top  %b[G]%b bottom%b' \
       "$BG_BAR" "$C_CYAN" "$C_RESET$BG_BAR" "$C_CYAN" "$C_RESET$BG_BAR" \
       "$C_CYAN" "$C_RESET$BG_BAR" "$C_CYAN" "$C_RESET$BG_BAR" "$C_CYAN" "$C_RESET$BG_BAR" "$C_RESET"
     _eol
@@ -2240,10 +2342,10 @@ _show_logs() {
 
     local filtered=()
     if [[ -z "$FILTER_LOGS" ]]; then
-      filtered=("${DATA_LINES[@]}")
+      filtered=("${LOG_LINES[@]}")
     else
       local line
-      for line in "${DATA_LINES[@]}"; do
+      for line in "${LOG_LINES[@]}"; do
         grep -i "$FILTER_LOGS" <<< "$line" &>/dev/null && filtered+=("$line")
       done
     fi
@@ -2298,12 +2400,6 @@ _show_logs() {
     IFS= read -rsn1 key
 
     case "$key" in
-      q|Q)
-        FILTER_LOGS=""
-        DETAIL_MODE=false
-        _clear
-        return
-        ;;
       g)
         SCROLL_OFFSET_LOGS=0
         ;;
@@ -2311,10 +2407,10 @@ _show_logs() {
         local view_h=$(( TERM_ROWS - 3 ))
         local filtered=()
         if [[ -z "$FILTER_LOGS" ]]; then
-          filtered=("${DATA_LINES[@]}")
+          filtered=("${LOG_LINES[@]}")
         else
           local line
-          for line in "${DATA_LINES[@]}"; do
+          for line in "${LOG_LINES[@]}"; do
             grep -i "$FILTER_LOGS" <<< "$line" &>/dev/null && filtered+=("$line")
           done
         fi
@@ -2325,10 +2421,10 @@ _show_logs() {
         local view_h=$(( TERM_ROWS - 3 ))
         local filtered=()
         if [[ -z "$FILTER_LOGS" ]]; then
-          filtered=("${DATA_LINES[@]}")
+          filtered=("${LOG_LINES[@]}")
         else
           local line
-          for line in "${DATA_LINES[@]}"; do
+          for line in "${LOG_LINES[@]}"; do
             grep -i "$FILTER_LOGS" <<< "$line" &>/dev/null && filtered+=("$line")
           done
         fi
@@ -2344,13 +2440,22 @@ _show_logs() {
         local seq=""
         read -rsn2 -t 0.15 seq || seq=""
         _drain_input
+
+        # Plain Esc: go back from logs view
+        if [[ -z "$seq" ]]; then
+          FILTER_LOGS=""
+          DETAIL_MODE=false
+          _clear
+          return
+        fi
+
         local view_h=$(( TERM_ROWS - 3 ))
         local filtered=()
         if [[ -z "$FILTER_LOGS" ]]; then
-          filtered=("${DATA_LINES[@]}")
+          filtered=("${LOG_LINES[@]}")
         else
           local line
-          for line in "${DATA_LINES[@]}"; do
+          for line in "${LOG_LINES[@]}"; do
             grep -i "$FILTER_LOGS" <<< "$line" &>/dev/null && filtered+=("$line")
           done
         fi
@@ -2371,9 +2476,6 @@ _show_logs() {
             SCROLL_OFFSET_LOGS=$(( SCROLL_OFFSET_LOGS + view_h ))
             (( SCROLL_OFFSET_LOGS + view_h > ${#filtered[@]} )) && SCROLL_OFFSET_LOGS=$(( ${#filtered[@]} - view_h ))
             (( SCROLL_OFFSET_LOGS < 0 )) && SCROLL_OFFSET_LOGS=0
-            ;;
-          "")
-            FILTER_LOGS=""
             ;;
         esac
         ;;
@@ -2751,11 +2853,9 @@ _switch_view() {
   FILTER=""
   DETAIL_MODE=false
   WATCH_MODE=false   # reset watch mode — you were watching the previous view
-  local load_key="${view}:${CURRENT_NS}"
-  if [[ -z "${VIEW_LOADED[$load_key]:-}" ]]; then
-    LAST_REFRESH=0
-    VIEW_LOADED[$load_key]=1
-  fi
+  # DATA_LINES is a shared buffer across views; always force a refresh
+  # when switching so the new renderer never sees stale rows.
+  LAST_REFRESH=0
 }
 # Palette aliases → kubectl resource type (used for generic fetch)
 # The rich pre-built views are still on 1-9 keys
