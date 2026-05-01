@@ -327,12 +327,20 @@ _draw_statusbar() {
     $WATCH_MODE && watch_color="$C_ORANGE"
 
     if (( TERM_COLS < 105 )); then
-      printf '%b[w]%b watch  %b[/]%b filter  %b[:]%b view  %b[n]%b ns  %b[C]%b ctx  %b[q]%b quit' \
-        "$watch_color" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
+      if [[ "$CURRENT_VIEW" == "secrets" ]]; then
+        printf '%b[x]%b decode  %b[/]%b filter  %b[:]%b view  %b[n]%b ns  %b[q]%b quit' \
+          "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
+      else
+        printf '%b[w]%b watch  %b[/]%b filter  %b[:]%b view  %b[n]%b ns  %b[C]%b ctx  %b[q]%b quit' \
+          "$watch_color" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
+      fi
     elif (( TERM_COLS < 140 )); then
       if [[ "$CURRENT_VIEW" == "pods" ]]; then
         printf '%b[l]%b logs  %b[e]%b exec  %b[r]%b restart  %b[D]%b delete  %b[/]%b filter  %b[:]%b view  %b[n]%b ns  %b[C]%b ctx  %b[q]%b quit' \
           "$k" "$r" "$k" "$r" "$k" "$r" "$C_RED" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
+      elif [[ "$CURRENT_VIEW" == "secrets" ]]; then
+        printf '%b[x]%b decode  %b[↑↓/j/k]%b nav  %b[Enter]%b describe  %b[/]%b filter  %b[:]%b view  %b[n]%b ns  %b[q]%b quit' \
+          "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
       else
         printf '%b[w]%b watch  %b[↑↓/j/k]%b nav  %b[Enter]%b describe  %b[/]%b filter  %b[:]%b view  %b[n]%b ns  %b[q]%b quit' \
           "$watch_color" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
@@ -341,6 +349,9 @@ _draw_statusbar() {
       if [[ "$CURRENT_VIEW" == "pods" ]]; then
         printf '%b[l]%b logs  %b[e]%b exec  %b[v]%b prev-logs  %b[t]%b top  %b[f]%b fwd  %b[r]%b restart  %b[D]%b delete  %b[w]%b watch  %b[:]%b view  %b[/]%b filter  %b[n]%b ns  %b[C]%b ctx  %b[R]%b refresh  %b[?]%b help  %b[q]%b quit' \
           "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$C_RED" "$r" "$watch_color" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
+      elif [[ "$CURRENT_VIEW" == "secrets" ]]; then
+        printf '%b[x]%b decode  %b[w]%b watch  %b[:]%b view  %b[↑↓/j/k]%b nav  %b[Enter]%b describe  %b[/]%b filter  %b[n]%b ns  %b[C]%b ctx  %b[R]%b refresh  %b[?]%b help  %b[q]%b quit' \
+          "$k" "$r" "$watch_color" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
       else
         printf '%b[w]%b watch  %b[:]%b view  %b[↑↓/j/k]%b nav  %b[Enter]%b describe  %b[/]%b filter  %b[n]%b ns  %b[C]%b ctx  %b[R]%b refresh  %b[?]%b help  %b[q]%b quit' \
           "$watch_color" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
@@ -872,6 +883,38 @@ _fetch_generic() {
   # nodes and namespaces are cluster-scoped
   [[ "$resource" == "nodes" || "$resource" == "namespaces" || "$resource" == "crds" ]] && ns_flag=""
 
+  if [[ "$resource" == "replicasets" ]]; then
+    mapfile -t DATA_LINES < <(
+      kubectl get replicasets $ns_flag \
+        --no-headers \
+        -o custom-columns=\
+'NAMESPACE:.metadata.namespace,'\
+'NAME:.metadata.name,'\
+'DESIRED:.spec.replicas,'\
+'CURRENT:.status.replicas,'\
+'READY:.status.readyReplicas,'\
+'AGE:.metadata.creationTimestamp' \
+        2>/dev/null \
+      | awk '{
+          d=$3; c=$4; r=$5
+          if (d=="<none>" || d=="") d=0
+          if (c=="<none>" || c=="") c=0
+          if (r=="<none>" || r=="") r=0
+          printf "%s\t%s\t%s\t%s\t%s\t%s\n", $1,$2,d,c,r,$6
+        }'
+    )
+
+    local i line ns name desired current ready age
+    local sep=$'\t'
+    for i in "${!DATA_LINES[@]}"; do
+      line="${DATA_LINES[$i]}"
+      IFS=$'\t' read -r ns name desired current ready age <<< "$line"
+      age=$(_human_age "$age")
+      DATA_LINES[$i]="${ns}${sep}${name}${sep}${desired}${sep}${current}${sep}${ready}${sep}${age}"
+    done
+    return
+  fi
+
   mapfile -t DATA_LINES < <(
     kubectl get "$resource" $ns_flag \
       --no-headers \
@@ -888,6 +931,60 @@ _fetch_generic() {
 _render_generic() {
   local start_row=4
   TERM_COLS=$(tput cols 2>/dev/null || echo 120)
+
+  if [[ "$GENERIC_RESOURCE" == "replicasets" ]]; then
+    local w_ns=14 w_name=34 w_des=8 w_cur=8 w_ready=8 w_age=6
+
+    _at $start_row 1
+    printf '%b%b %-*s %-*s %-*s %-*s %-*s %-*s%b' \
+      "$C_BOLD" "$C_DCYAN" \
+      "$w_ns" "NAMESPACE" "$w_name" "NAME" \
+      "$w_des" "DESIRED" "$w_cur" "CURRENT" "$w_ready" "READY" "$w_age" "AGE" \
+      "$C_RESET"
+    _eol
+    _hline $(( start_row+1 )) 1 "$TERM_COLS" "-" "$C_GRAY"
+
+    local row=$(( start_row+2 ))
+    local filtered=()
+    mapfile -t filtered < <(_filtered_lines)
+    local _vis=$(( TERM_ROWS - 4 - start_row ))
+    local _end=$(( SCROLL_OFFSET + _vis ))
+    (( _end > ${#filtered[@]} )) && _end=${#filtered[@]}
+
+    local idx
+    for (( idx=SCROLL_OFFSET; idx<_end; idx++ )); do
+      local line="${filtered[$idx]}"
+      (( row > TERM_ROWS - 4 )) && break
+      IFS=$'\t' read -r ns name desired current ready age <<< "$line"
+
+      _at "$row" 1; _eol; _at "$row" 1
+      local _rrst="$C_RESET"
+      if (( idx == SELECTED_IDX )); then
+        printf '%b' "$BG_SEL"
+        _rrst="$SEL_RST$BG_SEL"
+      fi
+
+      printf ' %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b %-*s' \
+        "$C_GRAY"  "$w_ns"   "${ns:0:$w_ns}" \
+        "$_rrst" "$C_WHITE" "$w_name"  "${name:0:$w_name}" \
+        "$_rrst" "$C_WHITE" "$w_des"   "${desired:0:$w_des}" \
+        "$_rrst" "$C_WHITE" "$w_cur"   "${current:0:$w_cur}" \
+        "$_rrst" "$C_GREEN" "$w_ready" "${ready:0:$w_ready}" \
+        "$_rrst" "$w_age"   "${age:0:$w_age}"
+
+      printf '%b' "$_rrst"; _eol; printf '%b' "$C_RESET"
+      (( row++ ))
+    done
+
+    if (( ${#filtered[@]} == 0 )); then
+      _at $(( start_row+4 )) $(( TERM_COLS/2-14 ))
+      printf '%bNo replicasets found%b' "$C_GRAY" "$C_RESET"
+    fi
+
+    _at $(( TERM_ROWS-2 )) 2
+    printf '%b%d replicasets%b' "$C_LGRAY" "${#filtered[@]}" "$C_RESET"
+    return
+  fi
 
   # Title shows resource type
   _at $start_row 1
@@ -1032,6 +1129,15 @@ _render_pods() {
   local filtered=()
   mapfile -t filtered < <(_filtered_lines)
 
+  local selected_node=""
+  if (( ${#filtered[@]} > 0 )); then
+    local _sidx=$SELECTED_IDX
+    (( _sidx < 0 )) && _sidx=0
+    (( _sidx >= ${#filtered[@]} )) && _sidx=$(( ${#filtered[@]} - 1 ))
+    local _sel_line="${filtered[$_sidx]}"
+    IFS=$'\t' read -r _ _ _ _ _ _ selected_node <<< "$_sel_line"
+  fi
+
   # Render only the visible window starting at SCROLL_OFFSET
   local visible_count=$(( TERM_ROWS - 4 - start_row ))
   local render_end=$(( SCROLL_OFFSET + visible_count ))
@@ -1060,6 +1166,15 @@ _render_pods() {
     (( _restarts_num > 5 )) && _restart_color="$C_RED"
 
     if $show_node; then
+      local node_disp="$node"
+      if (( ${#node_disp} > w_node )); then
+        if (( w_node > 3 )); then
+          node_disp="...${node_disp: -$(( w_node - 3 ))}"
+        else
+          node_disp="${node_disp:0:$w_node}"
+        fi
+      fi
+
       printf ' %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b %-*s %-*s' \
         "$C_GRAY"        "$w_ns"       "${ns:0:$w_ns}" \
         "$_rrst"         "$C_WHITE"    "$w_name"     "${name:0:$w_name}" \
@@ -1067,7 +1182,7 @@ _render_pods() {
         "$_rrst"         "$sc"         "$w_status"   "${status:0:$w_status}" \
         "$_rrst"         "$_restart_color" "$w_restarts" "${restarts:0:$w_restarts}" \
         "$_rrst"         "$w_age"      "${age:0:$w_age}" \
-                         "$w_node"     "${node:0:$w_node}"
+                         "$w_node"     "$node_disp"
     else
       printf ' %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b %-*s' \
         "$C_GRAY"        "$w_ns"       "${ns:0:$w_ns}" \
@@ -1089,11 +1204,23 @@ _render_pods() {
   fi
 
   # Summary line
-  _at $(( TERM_ROWS - 2 )) 2
+  _at $(( TERM_ROWS - 2 )) 2; _eol; _at $(( TERM_ROWS - 2 )) 2
   local total=${#filtered[@]}
   local running=0
   for _l in "${filtered[@]}"; do [[ "$_l" == *"Running"* ]] && (( running++ )) || true; done
   printf '%b%d pods%b  %bRunning: %d%b' "$C_LGRAY" "$total" "$C_RESET" "$C_GREEN" "$running" "$C_RESET"
+
+  if [[ -n "$selected_node" ]]; then
+    local base_plain="${total} pods  Running: ${running}"
+    local avail=$(( TERM_COLS - 2 - ${#base_plain} - 8 ))
+    if (( avail > 6 )); then
+      local node_full="$selected_node"
+      if (( ${#node_full} > avail )); then
+        node_full="...${node_full: -$(( avail - 3 ))}"
+      fi
+      printf '  %bNode:%b %b%s%b' "$C_GRAY" "$C_RESET" "$C_WHITE" "$node_full" "$C_RESET"
+    fi
+  fi
 }
 
 _render_deploys() {
@@ -2151,7 +2278,7 @@ _show_detail() {
     # Key bar — show only relevant actions for resource type
     _at 2 1
     if [[ "$resource" == "pods" || "$resource" == "pod" ]]; then
-      printf '%b%b[q]%b back  %b[↑↓/j/k]%b scroll  %b[g]%b top  %b[G]%b bottom  %b[l]%b logs  %b[e]%b exec  %b[r]%b restart%b' \
+      printf '%b%b[Esc]%b back  %b[↑↓/j/k]%b scroll  %b[g]%b top  %b[G]%b bottom  %b[l]%b logs  %b[e]%b exec  %b[r]%b restart%b' \
         "$BG_BAR" \
         "$C_CYAN" "$C_RESET$BG_BAR" \
         "$C_CYAN" "$C_RESET$BG_BAR" \
@@ -2162,7 +2289,7 @@ _show_detail() {
         "$C_CYAN" "$C_RESET$BG_BAR" \
         "$C_RESET"
     elif [[ "$resource" == "deployment" ]]; then
-      printf '%b%b[q]%b back  %b[↑↓/j/k]%b scroll  %b[g]%b top  %b[G]%b bottom  %b[r]%b restart%b' \
+      printf '%b%b[Esc]%b back  %b[↑↓/j/k]%b scroll  %b[g]%b top  %b[G]%b bottom  %b[r]%b restart%b' \
         "$BG_BAR" \
         "$C_CYAN" "$C_RESET$BG_BAR" \
         "$C_CYAN" "$C_RESET$BG_BAR" \
@@ -2171,7 +2298,7 @@ _show_detail() {
         "$C_CYAN" "$C_RESET$BG_BAR" \
         "$C_RESET"
     else
-      printf '%b%b[q]%b back  %b[↑↓/j/k]%b scroll  %b[g]%b top  %b[G]%b bottom%b' \
+      printf '%b%b[Esc]%b back  %b[↑↓/j/k]%b scroll  %b[g]%b top  %b[G]%b bottom%b' \
         "$BG_BAR" \
         "$C_CYAN" "$C_RESET$BG_BAR" \
         "$C_CYAN" "$C_RESET$BG_BAR" \
@@ -2226,12 +2353,6 @@ _show_detail() {
     IFS= read -rsn1 key
 
     case "$key" in
-      q|Q)
-        # Exit describe, return to list
-        DETAIL_MODE=false
-        _clear
-        return
-        ;;
       g)
         # Jump to top
         offset=0
