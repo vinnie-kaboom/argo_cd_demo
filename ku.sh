@@ -328,8 +328,8 @@ _draw_statusbar() {
 
     if (( TERM_COLS < 105 )); then
       if [[ "$CURRENT_VIEW" == "secrets" ]]; then
-        printf '%b[x]%b decode  %b[/]%b filter  %b[:]%b view  %b[n]%b ns  %b[q]%b quit' \
-          "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
+        printf '%b[x]%b decode  %b[w]%b watch  %b[/]%b filter  %b[:]%b view  %b[n]%b ns  %b[q]%b quit' \
+          "$k" "$r" "$watch_color" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
       else
         printf '%b[w]%b watch  %b[/]%b filter  %b[:]%b view  %b[n]%b ns  %b[C]%b ctx  %b[q]%b quit' \
           "$watch_color" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
@@ -339,8 +339,8 @@ _draw_statusbar() {
         printf '%b[l]%b logs  %b[e]%b exec  %b[r]%b restart  %b[D]%b delete  %b[/]%b filter  %b[:]%b view  %b[n]%b ns  %b[C]%b ctx  %b[q]%b quit' \
           "$k" "$r" "$k" "$r" "$k" "$r" "$C_RED" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
       elif [[ "$CURRENT_VIEW" == "secrets" ]]; then
-        printf '%b[x]%b decode  %b[↑↓/j/k]%b nav  %b[Enter]%b describe  %b[/]%b filter  %b[:]%b view  %b[n]%b ns  %b[q]%b quit' \
-          "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
+        printf '%b[x]%b decode  %b[w]%b watch  %b[↑↓/j/k]%b nav  %b[Enter]%b describe  %b[/]%b filter  %b[:]%b view  %b[n]%b ns  %b[q]%b quit' \
+          "$k" "$r" "$watch_color" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
       else
         printf '%b[w]%b watch  %b[↑↓/j/k]%b nav  %b[Enter]%b describe  %b[/]%b filter  %b[:]%b view  %b[n]%b ns  %b[q]%b quit' \
           "$watch_color" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
@@ -1548,7 +1548,6 @@ _render_events() {
   _hline $(( start_row+1 )) 1 "$TERM_COLS" "-" "$C_GRAY"
 
   local row=$(( start_row+2 ))
-  local idx=0
   local filtered=()
   mapfile -t filtered < <(_filtered_lines)
 
@@ -1558,7 +1557,13 @@ _render_events() {
     rev_filtered+=("${filtered[$i]}")
   done
 
-  for line in "${rev_filtered[@]}"; do
+  local _vis=$(( TERM_ROWS - 4 - start_row ))
+  local _end=$(( SCROLL_OFFSET + _vis ))
+  (( _end > ${#rev_filtered[@]} )) && _end=${#rev_filtered[@]}
+
+  local idx
+  for (( idx=SCROLL_OFFSET; idx<_end; idx++ )); do
+    local line="${rev_filtered[$idx]}"
     (( row > TERM_ROWS - 4 )) && break
     IFS=$'\t' read -r ns time type reason obj msg <<< "$line"
 
@@ -1566,7 +1571,7 @@ _render_events() {
     [[ "$type" == "Warning" ]] && tc="$C_YELLOW"
     [[ "$type" == "Error"   ]] && tc="$C_RED"
 
-    _at "$row" 1
+    _at "$row" 1; _eol; _at "$row" 1
     local _rsel="" _rrst="$C_RESET"
     if (( idx == SELECTED_IDX )); then
       printf '%b' "$BG_SEL"
