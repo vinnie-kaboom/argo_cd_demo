@@ -740,7 +740,9 @@ for cm in data.get('items', []):
     ns   = cm.get('metadata', {}).get('namespace', '')
     name = cm.get('metadata', {}).get('name', '')
     keys = len(cm.get('data') or {}) + len(cm.get('binaryData') or {})
-    age  = cm.get('metadata', {}).get('creationTimestamp', '')[:10]
+  age  = cm.get('metadata', {}).get('creationTimestamp', '')
+  if not ns or not name:
+    continue
     print('\t'.join([ns, name, str(keys), age]))
 " 2>/dev/null || true
     )
@@ -757,6 +759,26 @@ for cm in data.get('items', []):
       | awk '{printf "%s\t%s\t%s\t%s\n",$1,$2,0,$4}'
     )
   fi
+
+  # Normalize rows to: ns\tname\tkeys\tage(human). Drop malformed lines.
+  local i line ns name keys age _extra
+  local sep=$'\t'
+  local cleaned=()
+  for i in "${!DATA_LINES[@]}"; do
+    line="${DATA_LINES[$i]}"
+    IFS=$'\t' read -r ns name keys age _extra <<< "$line"
+
+    # Namespace/name must exist and namespace must look like a valid K8s namespace.
+    [[ -z "$ns" || -z "$name" ]] && continue
+    [[ ! "$ns" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]] && continue
+
+    keys="${keys//[^0-9]/}"
+    keys="${keys:-0}"
+    age=$(_human_age "$age")
+
+    cleaned+=("${ns}${sep}${name}${sep}${keys}${sep}${age}")
+  done
+  DATA_LINES=("${cleaned[@]}")
 }
 
 _fetch_pvcs() {
@@ -947,6 +969,42 @@ _fetch_generic() {
     return
   fi
 
+  if [[ "$resource" == "daemonsets" ]]; then
+    mapfile -t DATA_LINES < <(
+      kubectl get daemonsets $ns_flag \
+        --no-headers \
+        -o custom-columns=\
+'NAMESPACE:.metadata.namespace,'\
+'NAME:.metadata.name,'\
+'DESIRED:.status.desiredNumberScheduled,'\
+'CURRENT:.status.currentNumberScheduled,'\
+'READY:.status.numberReady,'\
+'UPTODATE:.status.updatedNumberScheduled,'\
+'AVAILABLE:.status.numberAvailable,'\
+'AGE:.metadata.creationTimestamp' \
+        2>/dev/null \
+      | awk '{
+          d=$3; c=$4; r=$5; u=$6; a=$7
+          if (d=="<none>" || d=="") d=0
+          if (c=="<none>" || c=="") c=0
+          if (r=="<none>" || r=="") r=0
+          if (u=="<none>" || u=="") u=0
+          if (a=="<none>" || a=="") a=0
+          printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", $1,$2,d,c,r,u,a,$8
+        }'
+    )
+
+    local i line ns name desired current ready uptodate available age
+    local sep=$'\t'
+    for i in "${!DATA_LINES[@]}"; do
+      line="${DATA_LINES[$i]}"
+      IFS=$'\t' read -r ns name desired current ready uptodate available age <<< "$line"
+      age=$(_human_age "$age")
+      DATA_LINES[$i]="${ns}${sep}${name}${sep}${desired}${sep}${current}${sep}${ready}${sep}${uptodate}${sep}${available}${sep}${age}"
+    done
+    return
+  fi
+
   mapfile -t DATA_LINES < <(
     kubectl get "$resource" $ns_flag \
       --no-headers \
@@ -1069,6 +1127,63 @@ _render_generic() {
 
     _at $(( TERM_ROWS-2 )) 2
     printf '%b%d statefulsets%b' "$C_LGRAY" "${#filtered[@]}" "$C_RESET"
+    return
+  fi
+
+  if [[ "$GENERIC_RESOURCE" == "daemonsets" ]]; then
+    local w_ns=14 w_name=28 w_des=4 w_cur=4 w_ready=5 w_up=8 w_avail=9 w_age=6
+
+    _at $start_row 1
+    printf '%b%b %-*s %-*s %-*s %-*s %-*s %-*s %-*s %-*s%b' \
+      "$C_BOLD" "$C_DCYAN" \
+      "$w_ns" "NAMESPACE" "$w_name" "NAME" \
+      "$w_des" "DES" "$w_cur" "CUR" "$w_ready" "READY" \
+      "$w_up" "UP-TO-D" "$w_avail" "AVAILABLE" "$w_age" "AGE" \
+      "$C_RESET"
+    _eol
+    _hline $(( start_row+1 )) 1 "$TERM_COLS" "-" "$C_GRAY"
+
+    local row=$(( start_row+2 ))
+    local filtered=()
+    mapfile -t filtered < <(_filtered_lines)
+    local _vis=$(( TERM_ROWS - 4 - start_row ))
+    local _end=$(( SCROLL_OFFSET + _vis ))
+    (( _end > ${#filtered[@]} )) && _end=${#filtered[@]}
+
+    local idx
+    for (( idx=SCROLL_OFFSET; idx<_end; idx++ )); do
+      local line="${filtered[$idx]}"
+      (( row > TERM_ROWS - 4 )) && break
+      IFS=$'\t' read -r ns name desired current ready uptodate available age <<< "$line"
+
+      _at "$row" 1; _eol; _at "$row" 1
+      local _rrst="$C_RESET"
+      if (( idx == SELECTED_IDX )); then
+        printf '%b' "$BG_SEL"
+        _rrst="$SEL_RST$BG_SEL"
+      fi
+
+      printf ' %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b %-*s' \
+        "$C_GRAY"  "$w_ns"    "${ns:0:$w_ns}" \
+        "$_rrst" "$C_WHITE"  "$w_name"  "${name:0:$w_name}" \
+        "$_rrst" "$C_WHITE"  "$w_des"   "${desired:0:$w_des}" \
+        "$_rrst" "$C_WHITE"  "$w_cur"   "${current:0:$w_cur}" \
+        "$_rrst" "$C_GREEN"  "$w_ready" "${ready:0:$w_ready}" \
+        "$_rrst" "$C_WHITE"  "$w_up"    "${uptodate:0:$w_up}" \
+        "$_rrst" "$C_WHITE"  "$w_avail" "${available:0:$w_avail}" \
+        "$_rrst" "$w_age"    "${age:0:$w_age}"
+
+      printf '%b' "$_rrst"; _eol; printf '%b' "$C_RESET"
+      (( row++ ))
+    done
+
+    if (( ${#filtered[@]} == 0 )); then
+      _at $(( start_row+4 )) $(( TERM_COLS/2-14 ))
+      printf '%bNo daemonsets found%b' "$C_GRAY" "$C_RESET"
+    fi
+
+    _at $(( TERM_ROWS-2 )) 2
+    printf '%b%d daemonsets%b' "$C_LGRAY" "${#filtered[@]}" "$C_RESET"
     return
   fi
 
