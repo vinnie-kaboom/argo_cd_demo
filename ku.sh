@@ -352,6 +352,30 @@ _draw_statusbar() {
   _eol
 }
 
+_confirm_quit() {
+  TERM_ROWS=$(tput lines 2>/dev/null || echo 40)
+  TERM_COLS=$(tput cols  2>/dev/null || echo 120)
+
+  local msg="Quit kube-dash? [y/N]"
+  local row=$(( TERM_ROWS / 2 ))
+  local col=$(( (TERM_COLS - ${#msg}) / 2 ))
+  (( col < 2 )) && col=2
+
+  _at "$row" 1
+  printf '%b%-*s%b' "$BG_BAR" "$TERM_COLS" "" "$C_RESET"
+  _at "$row" "$col"
+  printf '%b%s%b' "$C_YELLOW" "$msg" "$C_RESET"
+  _eol
+
+  _drain_input
+  local key=""
+  IFS= read -rsn1 key
+  case "$key" in
+    y|Y) return 0 ;;
+    *)   return 1 ;;
+  esac
+}
+
 # ── Column header row ──────────────────────────────────────
 
 _draw_col_header() {
@@ -3313,7 +3337,11 @@ _main_loop() {
     case "$key" in
 
       # ── Quit ──────────────────────────────────────────────
-      q|Q) exit 0 ;;
+      q|Q)
+        if _confirm_quit; then
+          exit 0
+        fi
+        ;;
 
       # ── Help ──────────────────────────────────────────────
       '?') _show_help; _clear; DETAIL_MODE=false ;;
