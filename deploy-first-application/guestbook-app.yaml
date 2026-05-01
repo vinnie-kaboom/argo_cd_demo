@@ -2215,58 +2215,212 @@ _show_logs() {
   local container_flag=""
   [[ -n "$container" ]] && container_flag="-c $container"
 
+  # Fetch logs into DATA_LINES array
   _clear
   _at 1 1
   printf '%b%b kube-dash › logs › %s %b' "$BG_HDR" "$C_CYAN" "$pod" "$C_RESET"
   _eol
   _at 2 1
-  printf '%b%b[q]%b back  %b[f]%b toggle follow%b' \
-    "$BG_BAR" "$C_CYAN" "$C_RESET$BG_BAR" "$C_CYAN" "$C_RESET$BG_BAR" "$C_RESET"
+  printf '%b%b Loading logs...%b' "$BG_BAR" "$C_GRAY" "$C_RESET"
   _eol
 
-  # Restore terminal for log display
+  # Capture logs into array
+  local tail_lines=200
+  mapfile -t DATA_LINES < <(
+    kubectl logs --tail=$tail_lines $container_flag "$pod" -n "$ns" 2>&1
+  )
+
+  local SCROLL_OFFSET_LOGS=0
+  local FILTER_LOGS=""
+
+  # Render logs loop
+  _render_logs() {
+    _clear
+    _at 1 1
+    printf '%b%b kube-dash › logs › %s %b' "$BG_HDR" "$C_CYAN" "$pod" "$C_RESET"
+    _eol
+    _at 2 1
+    printf '%b%b[q]%b back  %b[↑↓/j/k]%b scroll  %b[/]%b filter  %b[g]%b top  %b[G]%b bottom%b' \
+      "$BG_BAR" "$C_CYAN" "$C_RESET$BG_BAR" "$C_CYAN" "$C_RESET$BG_BAR" \
+      "$C_CYAN" "$C_RESET$BG_BAR" "$C_CYAN" "$C_RESET$BG_BAR" "$C_CYAN" "$C_RESET$BG_BAR" "$C_RESET"
+    _eol
+
+    # Filter indicator
+    if [[ -n "$FILTER_LOGS" ]]; then
+      _at 2 80
+      printf '%b/%s%b' "$C_YELLOW" "$FILTER_LOGS" "$C_RESET"
+    fi
+
+    local filtered=()
+    if [[ -z "$FILTER_LOGS" ]]; then
+      filtered=("${DATA_LINES[@]}")
+    else
+      local line
+      for line in "${DATA_LINES[@]}"; do
+        grep -i "$FILTER_LOGS" <<< "$line" &>/dev/null && filtered+=("$line")
+      done
+    fi
+
+    local view_h=$(( TERM_ROWS - 3 ))
+    local total_lines=${#filtered[@]}
+
+    # Clamp scroll offset
+    (( SCROLL_OFFSET_LOGS >= total_lines )) && SCROLL_OFFSET_LOGS=$(( total_lines - view_h ))
+    (( SCROLL_OFFSET_LOGS < 0 )) && SCROLL_OFFSET_LOGS=0
+
+    # Render visible lines
+    local i
+    for (( i=0; i<view_h; i++ )); do
+      local li=$(( SCROLL_OFFSET_LOGS + i ))
+      local out_row=$(( i + 3 ))
+      _at "$out_row" 1
+      if (( li < total_lines )); then
+        local line="${filtered[$li]}"
+        if [[ "$line" =~ ERROR|error|Error|FATAL|panic ]]; then
+          printf '%b%s%b' "$C_RED" "$line" "$C_RESET"
+        elif [[ "$line" =~ WARN|warn|WARNING ]]; then
+          printf '%b%s%b' "$C_YELLOW" "$line" "$C_RESET"
+        else
+          printf '%s' "$line"
+        fi
+      fi
+      _eol
+    done
+
+    # Status bar
+    _at "$TERM_ROWS" 1
+    printf '%b%-*s%b' "$BG_BAR" "$TERM_COLS" "" "$C_RESET"
+    _at "$TERM_ROWS" 2
+    local pct=0
+    (( total_lines > 0 )) && pct=$(( (SCROLL_OFFSET_LOGS + view_h) * 100 / total_lines ))
+    (( pct > 100 )) && pct=100
+    printf '%b line %d/%d  %d%%%b' \
+      "$C_GRAY" "$(( SCROLL_OFFSET_LOGS + 1 ))" "$total_lines" "$pct" "$C_RESET"
+  }
+
+  # Prepare for interactive mode
+  tput cnorm 2>/dev/null
+  stty -echo 2>/dev/null
+  stty cbreak 2>/dev/null || true
+
+  _render_logs
+  _drain_input
+
+  while true; do
+    local key=""
+    IFS= read -rsn1 key
+
+    case "$key" in
+      q|Q)
+        FILTER_LOGS=""
+        DETAIL_MODE=false
+        _clear
+        return
+        ;;
+      g)
+        SCROLL_OFFSET_LOGS=0
+        ;;
+      G)
+        local view_h=$(( TERM_ROWS - 3 ))
+        local filtered=()
+        if [[ -z "$FILTER_LOGS" ]]; then
+          filtered=("${DATA_LINES[@]}")
+        else
+          local line
+          for line in "${DATA_LINES[@]}"; do
+            grep -i "$FILTER_LOGS" <<< "$line" &>/dev/null && filtered+=("$line")
+          done
+        fi
+        SCROLL_OFFSET_LOGS=$(( ${#filtered[@]} - view_h ))
+        (( SCROLL_OFFSET_LOGS < 0 )) && SCROLL_OFFSET_LOGS=0
+        ;;
+      j)
+        local view_h=$(( TERM_ROWS - 3 ))
+        local filtered=()
+        if [[ -z "$FILTER_LOGS" ]]; then
+          filtered=("${DATA_LINES[@]}")
+        else
+          local line
+          for line in "${DATA_LINES[@]}"; do
+            grep -i "$FILTER_LOGS" <<< "$line" &>/dev/null && filtered+=("$line")
+          done
+        fi
+        (( SCROLL_OFFSET_LOGS + view_h < ${#filtered[@]} )) && (( SCROLL_OFFSET_LOGS++ ))
+        ;;
+      k)
+        (( SCROLL_OFFSET_LOGS > 0 )) && (( SCROLL_OFFSET_LOGS-- ))
+        ;;
+      '/')
+        _input_filter_logs
+        ;;
+      $'\x1b')
+        local seq=""
+        read -rsn2 -t 0.15 seq || seq=""
+        _drain_input
+        local view_h=$(( TERM_ROWS - 3 ))
+        local filtered=()
+        if [[ -z "$FILTER_LOGS" ]]; then
+          filtered=("${DATA_LINES[@]}")
+        else
+          local line
+          for line in "${DATA_LINES[@]}"; do
+            grep -i "$FILTER_LOGS" <<< "$line" &>/dev/null && filtered+=("$line")
+          done
+        fi
+        case "$seq" in
+          "[A")
+            (( SCROLL_OFFSET_LOGS > 0 )) && (( SCROLL_OFFSET_LOGS-- ))
+            ;;
+          "[B")
+            (( SCROLL_OFFSET_LOGS + view_h < ${#filtered[@]} )) && (( SCROLL_OFFSET_LOGS++ ))
+            ;;
+          "[5")
+            read -rsn1 -t 0.1 _ || true
+            SCROLL_OFFSET_LOGS=$(( SCROLL_OFFSET_LOGS - view_h ))
+            (( SCROLL_OFFSET_LOGS < 0 )) && SCROLL_OFFSET_LOGS=0
+            ;;
+          "[6")
+            read -rsn1 -t 0.1 _ || true
+            SCROLL_OFFSET_LOGS=$(( SCROLL_OFFSET_LOGS + view_h ))
+            (( SCROLL_OFFSET_LOGS + view_h > ${#filtered[@]} )) && SCROLL_OFFSET_LOGS=$(( ${#filtered[@]} - view_h ))
+            (( SCROLL_OFFSET_LOGS < 0 )) && SCROLL_OFFSET_LOGS=0
+            ;;
+          "")
+            FILTER_LOGS=""
+            ;;
+        esac
+        ;;
+    esac
+    _render_logs
+  done
+}
+
+# ── Filter input for logs ──────────────────────────────────
+
+_input_filter_logs() {
   tput cnorm 2>/dev/null
   stty echo 2>/dev/null
-  stty -cbreak 2>/dev/null || true
 
-  _at 3 1
-  if $LOG_FOLLOW; then
-    kubectl logs -f --tail=200 $container_flag "$pod" -n "$ns" 2>&1 \
-      | head -$(( TERM_ROWS - 3 )) \
-      | while IFS= read -r line; do
-          if [[ "$line" =~ "ERROR"|"error"|"Error"|"FATAL"|"panic" ]]; then
-            printf '%b%s%b\n' "$C_RED" "$line" "$C_RESET"
-          elif [[ "$line" =~ "WARN"|"warn"|"WARNING" ]]; then
-            printf '%b%s%b\n' "$C_YELLOW" "$line" "$C_RESET"
-          else
-            printf '%s\n' "$line"
-          fi
-        done
-  else
-    kubectl logs --tail=100 $container_flag "$pod" -n "$ns" 2>&1 \
-      | while IFS= read -r line; do
-          if [[ "$line" =~ "ERROR"|"error"|"Error"|"FATAL"|"panic" ]]; then
-            printf '%b%s%b\n' "$C_RED" "$line" "$C_RESET"
-          elif [[ "$line" =~ "WARN"|"warn"|"WARNING" ]]; then
-            printf '%b%s%b\n' "$C_YELLOW" "$line" "$C_RESET"
-          else
-            printf '%s\n' "$line"
-          fi
-        done
-  fi
+  _at "$TERM_ROWS" 1
+  printf '%b%-*s%b' "$BG_BAR" "$TERM_COLS" "" "$C_RESET"
+  _at "$TERM_ROWS" 2
+  printf '%b/%b' "$C_YELLOW" "$C_RESET"
 
-  printf '\n%b--- end of logs — press any key ---%b\n' "$C_GRAY" "$C_RESET"
+  local input=""
+  local char
+  while IFS= read -rsn1 char; do
+    case "$char" in
+      $'\x1b') break ;;
+      $'\x0a'|$'\r'|'') FILTER_LOGS="$input"; break ;;
+      $'\x7f'|$'\b') [[ -n "$input" ]] && input="${input%?}" ;;
+      *) input+="$char" ;;
+    esac
+    _at "$TERM_ROWS" 2
+    printf '%b/%b%-40s' "$C_YELLOW" "$C_RESET" "$input"
+  done
 
-  # Restore raw mode BEFORE reading the dismiss key so it is consumed
-  # cleanly in cbreak and does not leak into the main loop
-  stty -echo  2>/dev/null || true
-  stty cbreak 2>/dev/null || true
-  tput civis  2>/dev/null || true
-  _drain_input
-  read -rsn1
-  _drain_input
-
-  DETAIL_MODE=false
+  stty -echo 2>/dev/null
+  tput civis 2>/dev/null
 }
 
 # ── Exec shell ─────────────────────────────────────────────
@@ -2802,7 +2956,7 @@ _input_filter() {
   while IFS= read -rsn1 char; do
     case "$char" in
       $'\x1b') break ;;  # ESC — cancel
-      '') FILTER="$input"; break ;;  # Enter — apply
+      $'\x0a'|$'\r'|'') FILTER="$input"; break ;;  # Enter — apply
       $'\x7f'|$'\b') [[ -n "$input" ]] && input="${input%?}" ;;
       *) input+="$char" ;;
     esac
