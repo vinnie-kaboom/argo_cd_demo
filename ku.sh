@@ -915,6 +915,38 @@ _fetch_generic() {
     return
   fi
 
+  if [[ "$resource" == "statefulsets" ]]; then
+    mapfile -t DATA_LINES < <(
+      kubectl get statefulsets $ns_flag \
+        --no-headers \
+        -o custom-columns=\
+'NAMESPACE:.metadata.namespace,'\
+'NAME:.metadata.name,'\
+'DESIRED:.spec.replicas,'\
+'CURRENT:.status.replicas,'\
+'READY:.status.readyReplicas,'\
+'AGE:.metadata.creationTimestamp' \
+        2>/dev/null \
+      | awk '{
+          d=$3; c=$4; r=$5
+          if (d=="<none>" || d=="") d=0
+          if (c=="<none>" || c=="") c=0
+          if (r=="<none>" || r=="") r=0
+          printf "%s\t%s\t%s\t%s\t%s\t%s\n", $1,$2,d,c,r,$6
+        }'
+    )
+
+    local i line ns name desired current ready age
+    local sep=$'\t'
+    for i in "${!DATA_LINES[@]}"; do
+      line="${DATA_LINES[$i]}"
+      IFS=$'\t' read -r ns name desired current ready age <<< "$line"
+      age=$(_human_age "$age")
+      DATA_LINES[$i]="${ns}${sep}${name}${sep}${desired}${sep}${current}${sep}${ready}${sep}${age}"
+    done
+    return
+  fi
+
   mapfile -t DATA_LINES < <(
     kubectl get "$resource" $ns_flag \
       --no-headers \
@@ -986,10 +1018,71 @@ _render_generic() {
     return
   fi
 
+  if [[ "$GENERIC_RESOURCE" == "statefulsets" ]]; then
+    local w_ns=14 w_name=34 w_des=8 w_cur=8 w_ready=8 w_age=6
+
+    _at $start_row 1
+    printf '%b%b %-*s %-*s %-*s %-*s %-*s %-*s%b' \
+      "$C_BOLD" "$C_DCYAN" \
+      "$w_ns" "NAMESPACE" "$w_name" "NAME" \
+      "$w_des" "DESIRED" "$w_cur" "CURRENT" "$w_ready" "READY" "$w_age" "AGE" \
+      "$C_RESET"
+    _eol
+    _hline $(( start_row+1 )) 1 "$TERM_COLS" "-" "$C_GRAY"
+
+    local row=$(( start_row+2 ))
+    local filtered=()
+    mapfile -t filtered < <(_filtered_lines)
+    local _vis=$(( TERM_ROWS - 4 - start_row ))
+    local _end=$(( SCROLL_OFFSET + _vis ))
+    (( _end > ${#filtered[@]} )) && _end=${#filtered[@]}
+
+    local idx
+    for (( idx=SCROLL_OFFSET; idx<_end; idx++ )); do
+      local line="${filtered[$idx]}"
+      (( row > TERM_ROWS - 4 )) && break
+      IFS=$'\t' read -r ns name desired current ready age <<< "$line"
+
+      _at "$row" 1; _eol; _at "$row" 1
+      local _rrst="$C_RESET"
+      if (( idx == SELECTED_IDX )); then
+        printf '%b' "$BG_SEL"
+        _rrst="$SEL_RST$BG_SEL"
+      fi
+
+      printf ' %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b %-*s' \
+        "$C_GRAY"  "$w_ns"   "${ns:0:$w_ns}" \
+        "$_rrst" "$C_WHITE" "$w_name"  "${name:0:$w_name}" \
+        "$_rrst" "$C_WHITE" "$w_des"   "${desired:0:$w_des}" \
+        "$_rrst" "$C_WHITE" "$w_cur"   "${current:0:$w_cur}" \
+        "$_rrst" "$C_GREEN" "$w_ready" "${ready:0:$w_ready}" \
+        "$_rrst" "$w_age"   "${age:0:$w_age}"
+
+      printf '%b' "$_rrst"; _eol; printf '%b' "$C_RESET"
+      (( row++ ))
+    done
+
+    if (( ${#filtered[@]} == 0 )); then
+      _at $(( start_row+4 )) $(( TERM_COLS/2-15 ))
+      printf '%bNo statefulsets found%b' "$C_GRAY" "$C_RESET"
+    fi
+
+    _at $(( TERM_ROWS-2 )) 2
+    printf '%b%d statefulsets%b' "$C_LGRAY" "${#filtered[@]}" "$C_RESET"
+    return
+  fi
+
   # Title shows resource type
+  local ns_hint=""
+  if [[ "$CURRENT_NS" == "all" ]]; then
+    ns_hint=" -A"
+  elif [[ "$GENERIC_RESOURCE" != "nodes" && "$GENERIC_RESOURCE" != "namespaces" && "$GENERIC_RESOURCE" != "crds" ]]; then
+    ns_hint=" -n $CURRENT_NS"
+  fi
+
   _at $start_row 1
   printf '%b%b %-s%b' "$C_BOLD" "$C_DCYAN" \
-    "$(echo "$GENERIC_RESOURCE" | tr '[:lower:]' '[:upper:]')  (kubectl get $GENERIC_RESOURCE${CURRENT_NS:+ -n $CURRENT_NS})" \
+    "$(echo "$GENERIC_RESOURCE" | tr '[:lower:]' '[:upper:]')  (kubectl get $GENERIC_RESOURCE${ns_hint})" \
     "$C_RESET"
   _eol
   _hline $(( start_row+1 )) 1 "$TERM_COLS" "-" "$C_GRAY"
