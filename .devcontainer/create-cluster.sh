@@ -42,6 +42,7 @@ else
     --namespace argocd \
     --set server.service.type=NodePort \
     --set configs.params."server\.insecure"=true \
+    --set dex.enabled=false \
     --wait
   echo "✅ ArgoCD installed"
 fi

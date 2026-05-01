@@ -155,6 +155,47 @@ echo $ANTHROPIC_API_KEY
 
 ---
 
+## Advanced: Configuring Dex (OIDC/SSO)
+
+ArgoCD is currently deployed with **Dex disabled** for simplicity. If you want to enable SSO login via Dex or another OIDC provider:
+
+### Step 1 — Enable Dex in Helm
+
+Edit `.devcontainer/create-cluster.sh` and find the ArgoCD Helm install section. Change:
+
+```bash
+--set dex.enabled=false \
+```
+
+To:
+
+```bash
+--set dex.enabled=true \
+```
+
+### Step 2 — Configure Dex OIDC Provider
+
+Create an `argocd-dex-config.yaml` or update `.devcontainer/create-cluster.sh` to add dex configuration values. Example for GitHub OIDC:
+
+```bash
+helm install argocd argo/argo-cd \
+  --namespace argocd \
+  --set dex.enabled=true \
+  --set configs.dex.config="<your-dex-config-yaml>" \
+  --wait
+```
+
+Reference: https://argo-cd.readthedocs.io/en/stable/operator-manual/user-management/dex/
+
+### Step 3 — Rebuild the Cluster
+
+```bash
+kind delete cluster --name argocd-demo
+bash .devcontainer/create-cluster.sh argocd-demo
+```
+
+---
+
 *Files included in this zip:*
 - `README.md` — this guide
 - `.devcontainer/devcontainer.json` — Codespaces environment config
