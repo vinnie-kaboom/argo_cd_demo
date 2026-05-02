@@ -68,13 +68,17 @@ argocd-demo/
 
 ## Step 5 — Access the ArgoCD UI
 
-Once the Codespace is ready, in the terminal run:
+Once the bootstrap script finishes, it already starts the ArgoCD port-forward on port 8080 in the background.
+
+If you need to start it manually, run:
 
 ```bash
-kubectl port-forward svc/argocd-server -n argocd 8080:443
+kubectl port-forward svc/argocd-server -n argocd 8080:80
 ```
 
-The browser will automatically open the ArgoCD UI at https://localhost:8080
+If you see `bind: address already in use`, the background port-forward is already active. Open `http://localhost:8080` directly, or choose another local port such as `8081:80`.
+
+The browser will automatically open the ArgoCD UI at http://localhost:8080
 
 **Get your admin password:**
 ```bash
@@ -139,6 +143,20 @@ bash .devcontainer/setup-argocd.sh
 kubectl get pods -n argocd -w
 # Wait for all pods to show "Running"
 ```
+
+**ArgoCD login loops back to the login page?**
+```bash
+kubectl get pods -n argocd
+kubectl get events -n argocd --sort-by=.lastTimestamp | tail -n 20
+```
+
+If `argocd-repo-server` shows a `FailedMount` error for `ssh-known-hosts`, the install is incomplete. Repair it by re-running:
+
+```bash
+bash .devcontainer/create-cluster.sh
+```
+
+The setup script now runs `helm upgrade --install`, so it repairs a partial ArgoCD release instead of skipping it just because the `argocd` namespace already exists.
 
 **kind cluster not found?**
 ```bash

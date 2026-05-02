@@ -122,6 +122,48 @@ ArgoCD will reconcile shortly after and the app should return to `Synced`.
 
 -----
 
+## Login Loop After Successful Password Entry
+
+### Symptoms
+
+- You enter valid admin credentials in the ArgoCD UI
+- The page refreshes and returns to the login screen
+- `kubectl get events -n argocd` shows a `FailedMount` event for `argocd-repo-server`
+
+Example:
+
+```text
+MountVolume.SetUp failed for volume "ssh-known-hosts": failed to sync configmap cache: timed out waiting for the condition
+```
+
+### Root cause
+
+This usually means the ArgoCD Helm release is only partially installed. In this repo's Codespaces setup, that happened because the bootstrap script treated an existing `argocd` namespace as proof that ArgoCD was fully installed, so a broken release could be skipped on later runs.
+
+### Fix
+
+Re-run the bootstrap script so Helm reconciles the release:
+
+```bash
+bash .devcontainer/create-cluster.sh
+```
+
+Then confirm the core pods are healthy:
+
+```bash
+kubectl get pods -n argocd
+```
+
+Once `argocd-server` and `argocd-repo-server` are `Running`, start the port-forward again if needed:
+
+```bash
+kubectl port-forward svc/argocd-server -n argocd 8080:80 --address 0.0.0.0
+```
+
+Then log back in at `http://localhost:8080`.
+
+-----
+
 ## Notes
 
 - **`hostUsers: true`** is a Kubernetes-injected default introduced in newer K8s versions. It is safe to ignore in ArgoCD for Helm-managed deployments.

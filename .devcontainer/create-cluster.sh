@@ -32,23 +32,12 @@ else
   echo "✅ kubectl argo rollouts plugin installed"
 fi
 
-# ── Check if ArgoCD already installed ─────────────
-if kubectl get namespace argocd &>/dev/null; then
-  echo "✅ ArgoCD namespace already exists, skipping install"
-else
-  echo "🚀 Installing ArgoCD..."
-  kubectl create namespace argocd
-  helm install argocd argo/argo-cd \
-    --namespace argocd \
-    --set server.service.type=NodePort \
-    --set configs.params."server\.insecure"=true \
-    --set dex.enabled=false \
-    --wait
-  echo "✅ ArgoCD installed"
-fi
+# ── Reconcile ArgoCD install (repairs partial installs too) ──
+kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
 
-# ── Create placeholder TLS secrets (dex is disabled, so its secret is never
-#    auto-created; argocd-server will fail to start without it) ────────────
+# ── Create placeholder TLS secrets before reconciling the release. Dex is
+#    disabled, so its secret is never auto-created; repo/server pods can fail
+#    to start cleanly without these placeholders. ───────────────────────────
 for secret in argocd-dex-server-tls argocd-repo-server-tls; do
   if kubectl get secret "$secret" -n argocd &>/dev/null; then
     echo "✅ Secret '$secret' already exists, skipping"
@@ -60,6 +49,17 @@ for secret in argocd-dex-server-tls argocd-repo-server-tls; do
     echo "✅ Secret '$secret' created"
   fi
 done
+
+echo "🚀 Reconciling ArgoCD Helm release..."
+helm upgrade --install argocd argo/argo-cd \
+  --namespace argocd \
+  --set server.service.type=NodePort \
+  --set configs.params."server\.insecure"=true \
+  --set dex.enabled=false \
+  --wait
+kubectl rollout status deployment/argocd-server -n argocd --timeout=180s
+kubectl rollout status deployment/argocd-repo-server -n argocd --timeout=180s
+echo "✅ ArgoCD release is healthy"
 
 # ── Check if Argo Rollouts is already installed ───
 if kubectl get crd rollouts.argoproj.io &>/dev/null && \
@@ -86,6 +86,10 @@ echo ""
 echo "================================================"
 echo " ✅ Environment is ready!"
 echo "================================================"
+echo ""
+echo " ArgoCD port-forward is already running in the background."
+echo " If port 8080 is busy, use a different local port, for example:"
+echo "   kubectl port-forward svc/argocd-server -n argocd 8081:80 --address 0.0.0.0"
 echo ""
 echo " On Windows/Mac — open:"
 echo "   http://localhost:8080"
