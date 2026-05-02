@@ -76,10 +76,21 @@ fi
 # ── Start port-forward in background ──────────────
 echo ""
 echo "🚀 Starting ArgoCD port-forward..."
-pkill -f "port-forward.*argocd-server" 2>/dev/null || true
-nohup kubectl port-forward svc/argocd-server -n argocd 8080:80 --address 0.0.0.0 > /tmp/argocd-portforward.log 2>&1 &
-sleep 3
-echo "✅ Port-forward started"
+if pgrep -f "kubectl port-forward svc/argocd-server -n argocd 8080:80 --address 0.0.0.0" >/dev/null 2>&1; then
+  echo "✅ ArgoCD port-forward is already running on port 8080"
+elif ss -ltn | grep -q ':8080 '; then
+  echo "⚠️ Port 8080 is already in use by another process; skipping auto port-forward"
+  echo "   Use a different local port if needed, for example:"
+  echo "   kubectl port-forward svc/argocd-server -n argocd 8081:80 --address 0.0.0.0"
+else
+  nohup kubectl port-forward svc/argocd-server -n argocd 8080:80 --address 0.0.0.0 > /tmp/argocd-portforward.log 2>&1 &
+  sleep 3
+  if ss -ltn | grep -q ':8080 '; then
+    echo "✅ Port-forward started"
+  else
+    echo "⚠️ Port-forward did not bind to 8080; check /tmp/argocd-portforward.log"
+  fi
+fi
 
 # ── Print access instructions ──────────────────────
 echo ""
@@ -87,7 +98,7 @@ echo "================================================"
 echo " ✅ Environment is ready!"
 echo "================================================"
 echo ""
-echo " ArgoCD port-forward is already running in the background."
+echo " ArgoCD uses port 8080 when available."
 echo " If port 8080 is busy, use a different local port, for example:"
 echo "   kubectl port-forward svc/argocd-server -n argocd 8081:80 --address 0.0.0.0"
 echo ""

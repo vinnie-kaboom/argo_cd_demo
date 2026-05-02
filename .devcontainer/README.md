@@ -68,7 +68,9 @@ argocd-demo/
 
 ## Step 5 — Access the ArgoCD UI
 
-Once the bootstrap script finishes, it already starts the ArgoCD port-forward on port 8080 in the background.
+Once the bootstrap script finishes, it starts the ArgoCD port-forward on port 8080 when that port is available.
+
+If port 8080 is already occupied, the script skips the auto-forward and prints a fallback command on another local port.
 
 If you need to start it manually, run:
 
