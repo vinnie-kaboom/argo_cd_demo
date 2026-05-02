@@ -35,18 +35,21 @@ fi
 # ── Reconcile ArgoCD install (repairs partial installs too) ──
 kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
 
-# ── Create placeholder TLS secrets before reconciling the release. Dex is
-#    disabled, so its secret is never auto-created; repo/server pods can fail
-#    to start cleanly without these placeholders. ───────────────────────────
-for secret in argocd-dex-server-tls argocd-repo-server-tls; do
-  if kubectl get secret "$secret" -n argocd &>/dev/null; then
-    echo "✅ Secret '$secret' already exists, skipping"
-  else
-    echo "🚀 Creating placeholder secret '$secret'..."
-    kubectl create secret generic "$secret" -n argocd \
-      --from-literal=tls.crt="" \
-      --from-literal=tls.key=""
-    echo "✅ Secret '$secret' created"
+# ── Remove previously-created empty TLS secrets. ArgoCD components expect a
+#    valid cert/key pair when these secrets exist; placeholder values cause
+#    startup failures while the chart can run without them. ─────────────────
+for secret in argocd-dex-server-tls argocd-repo-server-tls argocd-server-tls; do
+  if ! kubectl get secret "$secret" -n argocd &>/dev/null; then
+    continue
+  fi
+
+  crt=$(kubectl get secret "$secret" -n argocd -o jsonpath='{.data.tls\.crt}' 2>/dev/null || true)
+  key=$(kubectl get secret "$secret" -n argocd -o jsonpath='{.data.tls\.key}' 2>/dev/null || true)
+
+  if [ -z "$crt" ] || [ -z "$key" ]; then
+    echo "🧹 Deleting incomplete TLS secret '$secret'..."
+    kubectl delete secret "$secret" -n argocd
+    echo "✅ Removed incomplete secret '$secret'"
   fi
 done
 
@@ -115,6 +118,11 @@ echo "   kubectl get secret argocd-initial-admin-secret \\"
 echo "   -n argocd -o jsonpath='{.data.password}' | base64 -d"
 echo ""
 echo " Username: admin"
+echo ""
+echo " If the UI accepts your password but does not finish logging in,"
+echo " open the forwarded URL in a private/incognito window or clear site data"
+echo " for the ArgoCD port URL. Rebuilds can rotate server.secretkey and"
+echo " invalidate stored browser sessions."
 echo ""
 echo " Verify Argo Rollouts:"
 echo "   kubectl get crd rollouts.argoproj.io"

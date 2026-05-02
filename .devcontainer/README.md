@@ -152,13 +152,20 @@ kubectl get pods -n argocd
 kubectl get events -n argocd --sort-by=.lastTimestamp | tail -n 20
 ```
 
-If `argocd-repo-server` shows a `FailedMount` error for `ssh-known-hosts`, the install is incomplete. Repair it by re-running:
+If the `argocd-server` log shows `server.secretkey is missing` followed by a successful
+`SessionService/Create`, ArgoCD regenerated its signing key and any old browser session
+stored for that forwarded port is now invalid. Fix it by opening the forwarded URL in a
+private/incognito window or by clearing site data for the ArgoCD port URL, then log in again.
+
+If `argocd-repo-server` shows a `FailedMount` error for `ssh-known-hosts`, or a repo/server pod fails with a TLS configuration error, the install is incomplete. Repair it by re-running:
 
 ```bash
 bash .devcontainer/create-cluster.sh
 ```
 
 The setup script now runs `helm upgrade --install`, so it repairs a partial ArgoCD release instead of skipping it just because the `argocd` namespace already exists.
+
+It also deletes incomplete `argocd-*-tls` secrets left behind by earlier bootstrap attempts. Empty TLS secrets can prevent ArgoCD from starting cleanly.
 
 **kind cluster not found?**
 ```bash
