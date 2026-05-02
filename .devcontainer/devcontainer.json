@@ -10,8 +10,7 @@
       "version": "latest",
       "helm": "latest",
       "minikube": "none"
-    },
-    "ghcr.io/devcontainers/features/github-cli:1": {}
+    }
   },
 
   "containerEnv": {
