@@ -47,6 +47,20 @@ else
   echo "✅ ArgoCD installed"
 fi
 
+# ── Create placeholder TLS secrets (dex is disabled, so its secret is never
+#    auto-created; argocd-server will fail to start without it) ────────────
+for secret in argocd-dex-server-tls argocd-repo-server-tls; do
+  if kubectl get secret "$secret" -n argocd &>/dev/null; then
+    echo "✅ Secret '$secret' already exists, skipping"
+  else
+    echo "🚀 Creating placeholder secret '$secret'..."
+    kubectl create secret generic "$secret" -n argocd \
+      --from-literal=tls.crt="" \
+      --from-literal=tls.key=""
+    echo "✅ Secret '$secret' created"
+  fi
+done
+
 # ── Check if Argo Rollouts is already installed ───
 if kubectl get crd rollouts.argoproj.io &>/dev/null && \
    kubectl get pods -n argo-rollouts &>/dev/null; then
