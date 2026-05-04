@@ -1383,22 +1383,22 @@ _render_pods() {
         fi
       fi
 
-      printf ' %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b %-*s %-*s' \
+      printf ' %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b' \
         "$C_GRAY"        "$w_ns"       "${ns:0:$w_ns}" \
         "$_rrst"         "$C_WHITE"    "$w_name"     "${name:0:$w_name}" \
         "$_rrst"         "$C_GREEN"    "$w_ready"    "${ready:0:$w_ready}" \
         "$_rrst"         "$sc"         "$w_status"   "${status:0:$w_status}" \
         "$_rrst"         "$_restart_color" "$w_restarts" "${restarts:0:$w_restarts}" \
-        "$_rrst"         "$w_age"      "${age:0:$w_age}" \
-                         "$w_node"     "$node_disp"
+        "$_rrst"         "$C_LGRAY"    "$w_age"      "${age:0:$w_age}" \
+        "$_rrst"         "$C_LGRAY"    "$w_node"     "$node_disp"
     else
-      printf ' %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b %-*s' \
+      printf ' %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b' \
         "$C_GRAY"        "$w_ns"       "${ns:0:$w_ns}" \
         "$_rrst"         "$C_WHITE"    "$w_name"     "${name:0:$w_name}" \
         "$_rrst"         "$C_GREEN"    "$w_ready"    "${ready:0:$w_ready}" \
         "$_rrst"         "$sc"         "$w_status"   "${status:0:$w_status}" \
         "$_rrst"         "$_restart_color" "$w_restarts" "${restarts:0:$w_restarts}" \
-        "$_rrst"         "$w_age"      "${age:0:$w_age}"
+        "$_rrst"         "$C_LGRAY"    "$w_age"      "${age:0:$w_age}"
     fi
 
     printf '%b' "$_rrst"; _eol; printf '%b' "$C_RESET"
@@ -3509,6 +3509,8 @@ _decode_secret() {
 _pager_text() {
   local title="$1"
   local content="$2"
+  local back_label="${3:-[q]}"
+  local q_action="${4:-back}"
 
   local all_lines=()
   while IFS= read -r line; do
@@ -3528,13 +3530,24 @@ _pager_text() {
     _eol
 
     _at 2 1
-    printf '%b%b[q]%b back  %b[↑↓/j/k]%b scroll  %b[g]%b top  %b[G]%b bottom%b' \
-      "$BG_BAR" \
-      "$C_CYAN" "$C_RESET$BG_BAR" \
-      "$C_CYAN" "$C_RESET$BG_BAR" \
-      "$C_CYAN" "$C_RESET$BG_BAR" \
-      "$C_CYAN" "$C_RESET$BG_BAR" \
-      "$C_RESET"
+    if [[ "$q_action" == "quit" ]]; then
+      printf '%b%b%s%b back  %b[q]%b quit  %b[↑↓/j/k]%b scroll  %b[g]%b top  %b[G]%b bottom%b' \
+        "$BG_BAR" \
+        "$C_CYAN" "$back_label" "$C_RESET$BG_BAR" \
+        "$C_CYAN" "$C_RESET$BG_BAR" \
+        "$C_CYAN" "$C_RESET$BG_BAR" \
+        "$C_CYAN" "$C_RESET$BG_BAR" \
+        "$C_CYAN" "$C_RESET$BG_BAR" \
+        "$C_RESET"
+    else
+      printf '%b%b%s%b back  %b[↑↓/j/k]%b scroll  %b[g]%b top  %b[G]%b bottom%b' \
+        "$BG_BAR" \
+        "$C_CYAN" "$back_label" "$C_RESET$BG_BAR" \
+        "$C_CYAN" "$C_RESET$BG_BAR" \
+        "$C_CYAN" "$C_RESET$BG_BAR" \
+        "$C_CYAN" "$C_RESET$BG_BAR" \
+        "$C_RESET"
+    fi
     _eol
 
     local i
@@ -3577,7 +3590,16 @@ _pager_text() {
     local key=""
     IFS= read -rsn1 key
     case "$key" in
-      q|Q) _clear; return ;;
+      q|Q)
+        if [[ "$q_action" == "quit" ]]; then
+          if _confirm_quit; then
+            exit 0
+          fi
+        else
+          _clear
+          return
+        fi
+        ;;
       g)   offset=0 ;;
       G)
         local view_h=$(( TERM_ROWS - 3 ))
@@ -3773,7 +3795,7 @@ _main_loop() {
             || echo "$ev_msg")
           # Word-wrap at 80 chars for readability
           ev_detail+=$(printf '%s' "$full_msg" | fold -s -w 80)
-          _pager_text "event › ${ev_obj}" "$(printf '%b' "$ev_detail")"
+          _pager_text "event › ${ev_obj}" "$(printf '%b' "$ev_detail")" "[Esc]" "quit"
           LAST_REFRESH=0
           continue
         fi
