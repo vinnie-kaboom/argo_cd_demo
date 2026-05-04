@@ -464,7 +464,10 @@ _fetch_pods() {
 'STATUS:.status.phase,'\
 'RESTARTS:.status.containerStatuses[*].restartCount,'\
 'AGE:.metadata.creationTimestamp,'\
-'NODE:.spec.nodeName' \
+'NODE:.spec.nodeName,'\
+'OWNERKIND:.metadata.ownerReferences[0].kind,'\
+'OWNERNAME:.metadata.ownerReferences[0].name,'\
+'PODIP:.status.podIP' \
       2>/dev/null \
     | awk '{
         # Count ready containers
@@ -473,19 +476,26 @@ _fetch_pods() {
         # Sum restarts
         split($5, b, ","); restarts=0
         for (i in b) { restarts += b[i]+0 }
-        printf "%s\t%s\t%d/%d\t%s\t%d\t%s\t%s\n", $1,$2,ready,total,$4,restarts,$6,$7
+        owner="-"
+        if ($8!="" && $8!="<none>") {
+          owner=$8
+          if ($9!="" && $9!="<none>") owner=owner "/" $9
+        }
+        ip=$10
+        if (ip=="" || ip=="<none>") ip="-"
+        printf "%s\t%s\t%d/%d\t%s\t%d\t%s\t%s\t%s\t%s\n", $1,$2,ready,total,$4,restarts,$6,$7,owner,ip
       }' \
     | sort -k4,4
   )
 
   # Convert RFC3339 timestamps to human ages (k9s-like: 45s/12m/3h/5d)
-  local i line ns name ready status restarts age node
+  local i line ns name ready status restarts age node owner ip
   local sep=$'\t'
   for i in "${!DATA_LINES[@]}"; do
     line="${DATA_LINES[$i]}"
-    IFS=$'\t' read -r ns name ready status restarts age node <<< "$line"
+    IFS=$'\t' read -r ns name ready status restarts age node owner ip <<< "$line"
     age=$(_human_age "$age")
-    DATA_LINES[$i]="${ns}${sep}${name}${sep}${ready}${sep}${status}${sep}${restarts}${sep}${age}${sep}${node}"
+    DATA_LINES[$i]="${ns}${sep}${name}${sep}${ready}${sep}${status}${sep}${restarts}${sep}${age}${sep}${node}${sep}${owner}${sep}${ip}"
   done
 }
 
@@ -1275,59 +1285,64 @@ _render_pods() {
   local start_row=4
   TERM_COLS=$(tput cols 2>/dev/null || echo 120)
 
-  # Responsive columns to avoid line wrap while keeping NODE visible when possible.
-  local w_ns=14 w_name=36 w_ready=7 w_status=16 w_restarts=8 w_age=6 w_node=24
-  local show_node=true
+  # Responsive columns. Prefer keeping quick-win diagnostics visible,
+  # then progressively hide less-critical columns on narrow terminals.
+  local w_ns=12 w_name=28 w_ready=7 w_status=14 w_restarts=8 w_age=6
+  local w_owner=20 w_ip=15 w_node=18
+  local show_owner=true show_ip=true show_node=true
 
-  if (( TERM_COLS < 140 )); then
-    w_ns=12
-    w_name=30
-    w_status=14
-    w_node=18
-  fi
-  if (( TERM_COLS < 118 )); then
-    w_ns=10
+  if (( TERM_COLS < 160 )); then
     w_name=24
-    w_ready=6
-    w_status=12
-    w_restarts=6
-    w_age=5
-    w_node=14
+    w_owner=16
+    w_ip=14
+    w_node=16
+  fi
+  if (( TERM_COLS < 142 )); then
+    show_owner=false
+    w_name=28
+  fi
+  if (( TERM_COLS < 128 )); then
+    show_ip=false
+    w_name=30
+  fi
+  if (( TERM_COLS < 114 )); then
+    show_node=false
+    w_name=32
   fi
   if (( TERM_COLS < 98 )); then
-    w_ns=9
-    w_name=18
-    w_ready=5
-    w_status=10
-    w_restarts=5
-    w_age=4
-    w_node=12
+    show_owner=false
+    show_node=false
+    w_ip=13
+    w_name=26
+    w_status=12
+    w_restarts=6
   fi
   if (( TERM_COLS < 86 )); then
-    # Very narrow terminals: drop NODE only as a last resort.
-    show_node=false
-    w_ns=8
-    w_name=18
-    w_ready=5
-    w_status=9
-    w_restarts=4
-    w_age=4
+    show_owner=false
+    w_ns=9
+    w_name=20
+    w_ready=6
+    w_status=10
+    w_restarts=5
+    w_age=5
+    w_ip=11
+  fi
+  if (( TERM_COLS < 74 )); then
+    show_ip=false
   fi
 
   _at $start_row 1
-  if $show_node; then
-    printf '%b%b %-*s %-*s %-*s %-*s %-*s %-*s %-*s%b' \
-      "$C_BOLD" "$C_DCYAN" \
-      "$w_ns" "NAMESPACE" "$w_name" "NAME" "$w_ready" "READY" \
-      "$w_status" "STATUS" "$w_restarts" "RESTARTS" "$w_age" "AGE" "$w_node" "NODE" \
-      "$C_RESET"
-  else
-    printf '%b%b %-*s %-*s %-*s %-*s %-*s %-*s%b' \
-      "$C_BOLD" "$C_DCYAN" \
-      "$w_ns" "NAMESPACE" "$w_name" "NAME" "$w_ready" "READY" \
-      "$w_status" "STATUS" "$w_restarts" "RESTARTS" "$w_age" "AGE" \
-      "$C_RESET"
-  fi
+  printf '%b%b ' "$C_BOLD" "$C_DCYAN"
+  printf '%-*s ' "$w_ns" "NAMESPACE"
+  printf '%-*s ' "$w_name" "NAME"
+  printf '%-*s ' "$w_ready" "READY"
+  printf '%-*s ' "$w_status" "STATUS"
+  printf '%-*s ' "$w_restarts" "RESTARTS"
+  printf '%-*s ' "$w_age" "AGE"
+  $show_owner && printf '%-*s ' "$w_owner" "OWNER"
+  $show_ip && printf '%-*s ' "$w_ip" "POD IP"
+  $show_node && printf '%-*s ' "$w_node" "NODE"
+  printf '%b' "$C_RESET"
   _eol
 
   _hline $(( start_row+1 )) 1 "$TERM_COLS" "-" "$C_GRAY"
@@ -1343,7 +1358,7 @@ _render_pods() {
     (( _sidx < 0 )) && _sidx=0
     (( _sidx >= ${#filtered[@]} )) && _sidx=$(( ${#filtered[@]} - 1 ))
     local _sel_line="${filtered[$_sidx]}"
-    IFS=$'\t' read -r _ _ _ _ _ _ selected_node <<< "$_sel_line"
+    IFS=$'\t' read -r _ _ _ _ _ _ selected_node _ _ <<< "$_sel_line"
   fi
 
   # Render only the visible window starting at SCROLL_OFFSET
@@ -1355,7 +1370,7 @@ _render_pods() {
     local line="${filtered[$idx]}"
     (( row > TERM_ROWS - 4 )) && break
 
-    IFS=$'\t' read -r ns name ready status restarts age node <<< "$line"
+    IFS=$'\t' read -r ns name ready status restarts age node owner ip <<< "$line"
 
     local sc
     sc=$(_status_color "$status")
@@ -1373,33 +1388,22 @@ _render_pods() {
     _restarts_num="${_restarts_num:-0}"
     (( _restarts_num > 5 )) && _restart_color="$C_RED"
 
-    if $show_node; then
-      local node_disp="$node"
-      if (( ${#node_disp} > w_node )); then
-        if (( w_node > 3 )); then
-          node_disp="...${node_disp: -$(( w_node - 3 ))}"
-        else
-          node_disp="${node_disp:0:$w_node}"
-        fi
-      fi
+    local owner_disp="$owner"
+    local ip_disp="$ip"
+    local node_disp="$node"
+    (( ${#owner_disp} > w_owner )) && owner_disp="${owner_disp:0:$(( w_owner - 3 ))}..."
+    (( ${#ip_disp} > w_ip )) && ip_disp="${ip_disp:0:$(( w_ip - 3 ))}..."
+    (( ${#node_disp} > w_node )) && node_disp="${node_disp:0:$(( w_node - 3 ))}..."
 
-      printf ' %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b' \
-        "$C_GRAY"        "$w_ns"       "${ns:0:$w_ns}" \
-        "$_rrst"         "$C_WHITE"    "$w_name"     "${name:0:$w_name}" \
-        "$_rrst"         "$C_GREEN"    "$w_ready"    "${ready:0:$w_ready}" \
-        "$_rrst"         "$sc"         "$w_status"   "${status:0:$w_status}" \
-        "$_rrst"         "$_restart_color" "$w_restarts" "${restarts:0:$w_restarts}" \
-        "$_rrst"         "$C_LGRAY"    "$w_age"      "${age:0:$w_age}" \
-        "$_rrst"         "$C_LGRAY"    "$w_node"     "$node_disp"
-    else
-      printf ' %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b' \
-        "$C_GRAY"        "$w_ns"       "${ns:0:$w_ns}" \
-        "$_rrst"         "$C_WHITE"    "$w_name"     "${name:0:$w_name}" \
-        "$_rrst"         "$C_GREEN"    "$w_ready"    "${ready:0:$w_ready}" \
-        "$_rrst"         "$sc"         "$w_status"   "${status:0:$w_status}" \
-        "$_rrst"         "$_restart_color" "$w_restarts" "${restarts:0:$w_restarts}" \
-        "$_rrst"         "$C_LGRAY"    "$w_age"      "${age:0:$w_age}"
-    fi
+    printf ' %b%-*s%b ' "$C_GRAY" "$w_ns" "${ns:0:$w_ns}" "$_rrst"
+    printf '%b%-*s%b ' "$C_WHITE" "$w_name" "${name:0:$w_name}" "$_rrst"
+    printf '%b%-*s%b ' "$C_GREEN" "$w_ready" "${ready:0:$w_ready}" "$_rrst"
+    printf '%b%-*s%b ' "$sc" "$w_status" "${status:0:$w_status}" "$_rrst"
+    printf '%b%-*s%b ' "$_restart_color" "$w_restarts" "${restarts:0:$w_restarts}" "$_rrst"
+    printf '%b%-*s%b ' "$C_LGRAY" "$w_age" "${age:0:$w_age}" "$_rrst"
+    $show_owner && printf '%b%-*s%b ' "$C_WHITE" "$w_owner" "$owner_disp" "$_rrst"
+    $show_ip && printf '%b%-*s%b ' "$C_WHITE" "$w_ip" "$ip_disp" "$_rrst"
+    $show_node && printf '%b%-*s%b ' "$C_WHITE" "$w_node" "$node_disp" "$_rrst"
 
     printf '%b' "$_rrst"; _eol; printf '%b' "$C_RESET"
     (( row++ ))
@@ -3254,69 +3258,58 @@ declare -A KX_LABELS=(
 
 KX_ALIAS_DISPLAY=(po dep no ev app cert sec svc cm pvc ing job cj hpa ns rs sts ds sa rb crd)
 _draw_palette() {
-  local inp="$1" br="$2" bc="$3" bw="$4" bh="$5"
-  local r
+  local inp="$1"
+  TERM_ROWS=$(tput lines 2>/dev/null || echo 40)
+  TERM_COLS=$(tput cols  2>/dev/null || echo 120)
 
-  for (( r=br; r<br+bh; r++ )); do
-    _at "$r" "$bc"
-    printf '\e[48;5;234m%-*s\e[0m' "$bw" ""
-  done
+  local prompt_row=$(( TERM_ROWS - 1 ))
+  local hint_row=$TERM_ROWS
 
-  _at "$br" "$bc"
-  printf '\e[48;5;24m\e[38;5;255m\e[1m %-*s\e[0m' $(( bw-1 )) " kube-dash › switch view"
-
-  _at $(( br+1 )) "$bc"
-  local cursor_pad=$(( bw - ${#inp} - 3 ))
-  (( cursor_pad < 0 )) && cursor_pad=0
-  printf '\e[48;5;236m\e[38;5;220m :%s\e[38;5;51m_\e[0m\e[48;5;236m%-*s\e[0m' \
-    "$inp" "$cursor_pad" ""
-
-  _at $(( br+2 )) "$bc"
-  printf '\e[48;5;234m\e[38;5;238m%-*s\e[0m' "$bw" \
-    "$(printf '%*s' "$bw" '' | tr ' ' '-')"
-
-  local row=$(( br+3 ))
-  local matches=0
+  local first_alias=""
+  local first_label=""
+  local match_count=0
   local ak
+  local hint_list=""
+
   for ak in "${KX_ALIAS_DISPLAY[@]}"; do
     local target="${KX_ALIASES[$ak]:-}"
     local label="${KX_LABELS[$ak]:-$target}"
     [[ -z "$target" ]] && continue
     if [[ -z "$inp" || "$ak" == "$inp"* || "$label" == "$inp"* || "$target" == "$inp"* ]]; then
-      (( row >= br+bh-1 )) && break
-      _at "$row" "$bc"
-      if [[ -n "$inp" && ( "$ak" == "$inp"* || "$label" == "$inp"* || "$target" == "$inp"* ) ]]; then
-        printf '\e[48;5;234m \e[38;5;51m\e[1m%-8s\e[0m\e[48;5;234m\e[38;5;248m  %-22s\e[0m' \
-          "$ak" "$label"
-      else
-        printf '\e[48;5;234m \e[38;5;240m%-8s  %-22s\e[0m' "$ak" "$label"
+      (( match_count++ ))
+      if [[ -z "$first_alias" ]]; then
+        first_alias="$ak"
+        first_label="$label"
       fi
-      _eol
-      row=$(( row + 1 ))
-      matches=$(( matches + 1 ))
+      if (( match_count <= 3 )); then
+        [[ -n "$hint_list" ]] && hint_list+="  "
+        hint_list+="$ak:$label"
+      fi
     fi
   done
 
-  if (( matches == 0 )); then
-    _at $(( br+3 )) "$bc"
-    printf '\e[48;5;234m \e[38;5;196m no match for "%s"\e[0m' "$inp"
-  fi
+  _at "$prompt_row" 1
+  printf '\e[48;5;236m%-*s\e[0m' "$TERM_COLS" ""
+  _at "$prompt_row" 2
+  printf '\e[48;5;236m\e[38;5;220m:\e[38;5;51m%s\e[38;5;51m_\e[0m' "$inp"
+  _eol
 
-  _at $(( br+bh-1 )) "$bc"
-  printf '\e[48;5;234m\e[38;5;240m %-*s\e[0m' $(( bw-1 )) \
-    "Enter=go  Esc/:=cancel  type to filter"
+  _at "$hint_row" 1
+  printf '\e[48;5;234m%-*s\e[0m' "$TERM_COLS" ""
+  _at "$hint_row" 2
+  if (( match_count == 0 )); then
+    printf '\e[48;5;234m\e[38;5;196mno match\e[38;5;240m  Enter=go  Tab=complete  Esc/:=cancel\e[0m'
+  else
+    printf '\e[48;5;234m\e[38;5;51m%s\e[38;5;248m  (%d match%s)\e[38;5;240m  Tab=%s  Enter=go  Esc/:=cancel\e[0m' \
+      "$hint_list" "$match_count" "$( (( match_count == 1 )) && echo "" || echo "es" )" "$first_alias"
+  fi
+  _eol
 }
 
 _command_palette() {
-  TERM_ROWS=$(tput lines 2>/dev/null || echo 40)
-  TERM_COLS=$(tput cols  2>/dev/null || echo 120)
-
-  local box_w=52 box_h=22
-  local box_r=$(( TERM_ROWS/2 - box_h/2 ))
-  local box_c=$(( TERM_COLS/2 - box_w/2 ))
   local input=""
 
-  _draw_palette "$input" "$box_r" "$box_c" "$box_w" "$box_h"
+  _draw_palette "$input"
   _drain_input
 
   while true; do
@@ -3330,6 +3323,18 @@ _command_palette() {
         ;;
       ':')
         return
+        ;;
+      $'\t')
+        local ak
+        for ak in "${KX_ALIAS_DISPLAY[@]}"; do
+          local target="${KX_ALIASES[$ak]:-}"
+          local label="${KX_LABELS[$ak]:-$target}"
+          [[ -z "$target" ]] && continue
+          if [[ -z "$input" || "$ak" == "$input"* || "$label" == "$input"* || "$target" == "$input"* ]]; then
+            input="$ak"
+            break
+          fi
+        done
         ;;
       $'\x7f'|$'\b')
         [[ -n "$input" ]] && input="${input%?}"
@@ -3375,12 +3380,12 @@ _command_palette() {
         return
         ;;
       *)
-        if [[ "$key" =~ [[:alnum:]_-] ]]; then
+        if [[ "$key" =~ [[:alnum:]_.-] ]]; then
           input+="$key"
         fi
         ;;
     esac
-    _draw_palette "$input" "$box_r" "$box_c" "$box_w" "$box_h"
+    _draw_palette "$input"
   done
 }
 
