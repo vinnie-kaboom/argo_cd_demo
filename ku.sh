@@ -3351,6 +3351,8 @@ _command_palette() {
           deployments)             _switch_view "deploys"    ;;
           nodes)                   _switch_view "nodes"      ;;
           events)                  _switch_view "events"     ;;
+          application|applications|application.argoproj.io|applications.argoproj.io)
+                                   _switch_view "argocd"     ;;
           secrets)                 _switch_view "secrets"    ;;
           services)                _switch_view "services"   ;;
           configmaps)              _switch_view "configmaps" ;;
