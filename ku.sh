@@ -3262,14 +3262,12 @@ _draw_palette() {
   TERM_ROWS=$(tput lines 2>/dev/null || echo 40)
   TERM_COLS=$(tput cols  2>/dev/null || echo 120)
 
-  local prompt_row=$(( TERM_ROWS - 1 ))
-  local hint_row=$TERM_ROWS
+  local prompt_row=$TERM_ROWS
 
   local first_alias=""
   local first_label=""
   local match_count=0
   local ak
-  local hint_list=""
 
   for ak in "${KX_ALIAS_DISPLAY[@]}"; do
     local target="${KX_ALIASES[$ak]:-}"
@@ -3281,10 +3279,6 @@ _draw_palette() {
         first_alias="$ak"
         first_label="$label"
       fi
-      if (( match_count <= 3 )); then
-        [[ -n "$hint_list" ]] && hint_list+="  "
-        hint_list+="$ak:$label"
-      fi
     fi
   done
 
@@ -3292,16 +3286,18 @@ _draw_palette() {
   printf '\e[48;5;236m%-*s\e[0m' "$TERM_COLS" ""
   _at "$prompt_row" 2
   printf '\e[48;5;236m\e[38;5;220m:\e[38;5;51m%s\e[38;5;51m_\e[0m' "$inp"
-  _eol
 
-  _at "$hint_row" 1
-  printf '\e[48;5;234m%-*s\e[0m' "$TERM_COLS" ""
-  _at "$hint_row" 2
+  local left_len=$(( 3 + ${#inp} ))
+  local hint_col=$(( left_len + 4 ))
+  (( hint_col < 22 )) && hint_col=22
+  (( hint_col > TERM_COLS - 8 )) && hint_col=$(( TERM_COLS - 8 ))
+  _at "$prompt_row" "$hint_col"
+
   if (( match_count == 0 )); then
-    printf '\e[48;5;234m\e[38;5;196mno match\e[38;5;240m  Enter=go  Tab=complete  Esc/:=cancel\e[0m'
+    printf '\e[48;5;236m\e[38;5;196mno match\e[38;5;240m  Enter=go  Esc/:=cancel\e[0m'
   else
-    printf '\e[48;5;234m\e[38;5;51m%s\e[38;5;248m  (%d match%s)\e[38;5;240m  Tab=%s  Enter=go  Esc/:=cancel\e[0m' \
-      "$hint_list" "$match_count" "$( (( match_count == 1 )) && echo "" || echo "es" )" "$first_alias"
+    printf '\e[48;5;236m\e[38;5;51mTab:%s\e[38;5;248m (%d)\e[38;5;240m  Enter=go  Esc/:=cancel\e[0m' \
+      "$first_alias" "$match_count"
   fi
   _eol
 }
