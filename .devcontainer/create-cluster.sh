@@ -58,7 +58,7 @@ helm upgrade --install argocd argo/argo-cd \
   --namespace argocd \
   --set server.service.type=NodePort \
   --set configs.params."server\.insecure"=true \
-  --set dex.enabled=false \
+  --set dex.enabled=true \
   --wait
 kubectl rollout status deployment/argocd-server -n argocd --timeout=180s
 kubectl rollout status deployment/argocd-repo-server -n argocd --timeout=180s
