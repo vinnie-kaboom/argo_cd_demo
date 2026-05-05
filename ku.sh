@@ -3104,82 +3104,153 @@ _help_section() {
 # ── Help screen ────────────────────────────────────────────
 
 _show_help() {
-  _clear
-  _at 1 1
-  printf '%b%b kube-dash v%s › help %b' "$BG_HDR" "$C_CYAN" "$VERSION" "$C_RESET"
+  local -a help_lines=(
+    "## Navigation"
+    "↑↓ / j k                Move selection up/down"
+    "Enter                   Describe / drill into selected resource"
+    "Tab                     Next view (cycles all 15)"
+    "Shift-Tab               Previous view"
+    "n                       Pick namespace"
+    "C                       Pick context"
+    "/                       Filter current view"
+    "Esc                     Back to Pods (or clear filter in Pods)"
+    ""
+    "## Actions (Pods)"
+    "l                       Logs"
+    "L                       Toggle follow logs"
+    "v                       Previous logs (crashed container)"
+    "e                       Exec shell into pod"
+    "t                       kubectl top (pods or nodes)"
+    "f                       Port-forward (pods or services)"
+    "r                       Rolling restart (deployments)"
+    "D                       Delete resource"
+    "d                       Describe selected resource"
+    ""
+    "## Actions (Other views)"
+    "x                       Decode secret (Secrets view)"
+    "f                       Port-forward (Services view)"
+    "t                       kubectl top nodes (Nodes view)"
+    ""
+    "## Views - Row 1 (1-9)"
+    "1 / p                   Pods"
+    "2                       Deployments"
+    "3                       Nodes"
+    "4                       Events (all namespaces)"
+    "5 / a                   ArgoCD Applications"
+    "6                       cert-manager Certificates"
+    "7 / s                   Secrets"
+    "8                       Services"
+    "9                       Helm Releases"
+    ""
+    "## Views - Row 2 (: command palette)"
+    ":                       Open command palette"
+    "po -> pods"
+    "dep -> deployments"
+    "no -> nodes"
+    "ev -> events"
+    "app -> applications"
+    "cert -> certificates"
+    "sec -> secrets"
+    "svc -> services"
+    "cm -> configmaps"
+    "pvc -> persistentvolumeclaims"
+    "ing -> ingresses"
+    "job -> jobs"
+    "cj -> cronjobs"
+    "hpa -> horizontalpodautoscalers"
+    "ns -> namespaces"
+    "rs -> replicasets"
+    "sts -> statefulsets"
+    "ds -> daemonsets"
+    "sa -> serviceaccounts"
+    "rb -> rolebindings"
+    "crd -> crds"
+    ""
+    "## General"
+    "w                       Toggle watch mode (auto-refresh every 5s)"
+    "?                       This help screen"
+    "R                       Force refresh"
+    "q / Ctrl-C              Quit / go back"
+  )
 
-  local col1=4
-  _help_row_num=3
-  _help_col1=$col1
+  local offset=0
+  local total=${#help_lines[@]}
 
-  _help_section "Navigation"
-  _help_row "↑↓ / j k"     "Move selection up/down"
-  _help_row "Enter"        "Describe / drill into selected resource"
-  _help_row "Tab"          "Next view (cycles all 15)"
-  _help_row "Shift-Tab"    "Previous view"
-  _help_row "n"            "Pick namespace"
-  _help_row "C"            "Pick context"
-  _help_row "/"            "Filter current view"
-  _help_row "Esc"          "Back to Pods (or clear filter in Pods)"
+  while true; do
+    TERM_ROWS=$(tput lines 2>/dev/null || echo 40)
+    TERM_COLS=$(tput cols  2>/dev/null || echo 120)
+    local start_row=3
+    local end_row=$(( TERM_ROWS - 2 ))
+    local visible=$(( end_row - start_row + 1 ))
+    (( visible < 1 )) && visible=1
 
-  _help_section "Actions (Pods)"
-  _help_row "l"            "Logs"
-  _help_row "L"            "Toggle follow logs"
-  _help_row "v"            "Previous logs (crashed container)"
-  _help_row "e"            "Exec shell into pod"
-  _help_row "t"            "kubectl top (pods or nodes)"
-  _help_row "f"            "Port-forward (pods or services)"
-  _help_row "r"            "Rolling restart (deployments)"
-  _help_row "D"            "Delete resource"
-  _help_row "d"            "Describe selected resource"
+    local max_offset=$(( total - visible ))
+    (( max_offset < 0 )) && max_offset=0
+    (( offset > max_offset )) && offset=$max_offset
+    (( offset < 0 )) && offset=0
 
-  _help_section "Actions (Other views)"
-  _help_row "x"            "Decode secret (Secrets view)"
-  _help_row "f"            "Port-forward (Services view)"
-  _help_row "t"            "kubectl top nodes (Nodes view)"
+    _clear
+    _at 1 1
+    printf '%b%-*s%b' "$BG_HDR" "$TERM_COLS" "" "$C_RESET"
+    _at 1 2
+    printf '%b%b kube-dash v%s › help %b' "$BG_HDR" "$C_CYAN" "$VERSION" "$C_RESET"
 
-  _help_section "Views — Row 1 (1-9)"
-  _help_row "1 / p"        "Pods"
-  _help_row "2"            "Deployments"
-  _help_row "3"            "Nodes"
-  _help_row "4"            "Events (all namespaces)"
-  _help_row "5 / a"        "ArgoCD Applications"
-  _help_row "6"            "cert-manager Certificates"
-  _help_row "7 / s"        "Secrets"
-  _help_row "8"            "Services"
-  _help_row "9"            "Helm Releases"
+    local row=$start_row
+    local i
+    for (( i=offset; i<total && row<=end_row; i++ )); do
+      local line="${help_lines[$i]}"
+      _at "$row" 4
+      if [[ "$line" == '## '* ]]; then
+        local title="${line#\#\# }"
+        printf '%b%b%s%b' "$C_YELLOW" "$C_BOLD" "$title" "$C_RESET"
+      elif [[ -z "$line" ]]; then
+        :
+      elif [[ "$line" == *'->'* ]]; then
+        printf '%b%s%b' "$C_CYAN" "$line" "$C_RESET"
+      else
+        printf '%s' "$line"
+      fi
+      _eol
+      (( row++ ))
+    done
 
-  _help_section "Views — Row 2 (: command palette)"
-  _help_row ":"              "Open command palette"
-  _help_row "po / pod"       "Pods"
-  _help_row "dep / deploy"   "Deployments"
-  _help_row "no / node"      "Nodes"
-  _help_row "ev / event"     "Events"
-  _help_row "app"            "ArgoCD Applications"
-  _help_row "cert"           "Certificates"
-  _help_row "sec / secret"   "Secrets"
-  _help_row "svc / service"  "Services"
-  _help_row "helm / hr"      "Helm Releases"
-  _help_row "cm / configmap" "ConfigMaps"
-  _help_row "pvc"            "PVCs"
-  _help_row "ing / ingress"  "Ingresses"
-  _help_row "ns / namespace" "Namespaces"
-  _help_row "job"            "Jobs"
-  _help_row "cj / cronjob"   "CronJobs"
-  _help_row "hpa"            "HPA"
+    while (( row <= end_row )); do
+      _at "$row" 1
+      _eol
+      (( row++ ))
+    done
 
-  _help_section "General"
-  _help_row "w"            "Toggle watch mode (auto-refresh every 5s)"
-  _help_row "?"            "This help screen"
-  _help_row "R"            "Force refresh"
-  _help_row "q / Ctrl-C"   "Quit / go back"
+    _at "$TERM_ROWS" 1
+    printf '%b%-*s%b' "$BG_BAR" "$TERM_COLS" "" "$C_RESET"
+    _at "$TERM_ROWS" 2
+    printf '%b[↑↓/j/k]%b scroll  %b[PgUp/PgDn g/G]%b jump  %b[q/Enter/Esc]%b close  %b(%d-%d/%d)%b' \
+      "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET" "$C_GRAY" \
+      $(( offset + 1 )) $(( offset + visible > total ? total : offset + visible )) "$total" "$C_RESET"
+    _eol
 
-  (( _help_row_num += 2 ))
-  _at "$_help_row_num" "$_help_col1"
-  printf '%bPress any key to return...%b' "$C_GRAY" "$C_RESET"
-  _drain_input
-  read -rsn1
-  _drain_input
+    local key=""
+    IFS= read -rsn1 key
+    case "$key" in
+      $'\x1b')
+        local seq=""
+        read -rsn2 -t 0.15 seq || seq=""
+        case "$seq" in
+          "[A") (( offset > 0 )) && (( offset-- )) ;;
+          "[B") (( offset < max_offset )) && (( offset++ )) ;;
+          "[5") read -rsn1 -t 0.05 _ || true; offset=$(( offset - visible )); (( offset < 0 )) && offset=0 ;;
+          "[6") read -rsn1 -t 0.05 _ || true; offset=$(( offset + visible )); (( offset > max_offset )) && offset=$max_offset ;;
+          *) _drain_input; return ;;
+        esac
+        ;;
+      k) (( offset > 0 )) && (( offset-- )) ;;
+      j) (( offset < max_offset )) && (( offset++ )) ;;
+      g) offset=0 ;;
+      G) offset=$max_offset ;;
+      ' ') offset=$(( offset + visible )); (( offset > max_offset )) && offset=$max_offset ;;
+      '') return ;;
+      q|Q) return ;;
+    esac
+  done
 }
 
 # ── Command palette (:) ────────────────────────────────────
