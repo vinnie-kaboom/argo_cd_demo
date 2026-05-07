@@ -15,12 +15,17 @@
 #    r                   Rolling restart (deploy/sts/ds)
 #    D                   Delete resource (with confirm)
 #    /                   Search/filter current view
+#    0                   Compact All-resources view
+#    K                   Cycle kind filter (All view)
+#    f                   Failures only toggle (All view)
+#    m                   Toggle more kinds (All view)
 #    n                   Switch namespace
 #    c                   Switch context
 #    f                   Toggle follow logs
 #    q / Ctrl-C          Quit / back
 #    ?                   Help screen
 #    1-6                 Jump to view
+#    0                   Compact All-resources view
 # ============================================================
 
 set -o pipefail
@@ -62,7 +67,7 @@ SEL_RST=$'\e[39m'
 # ── State ──────────────────────────────────────────────────
 CURRENT_NS="default"
 CURRENT_CTX=""
-CURRENT_VIEW="pods"     # pods | deploys | nodes | events | argocd | certs | generic
+CURRENT_VIEW="pods"     # pods | deploys | nodes | events | argocd | certs | all | generic
 GENERIC_RESOURCE=""    # set when CURRENT_VIEW=generic, e.g. "applications"
 SELECTED_IDX=0
 SCROLL_OFFSET=0         # first visible row in current view
@@ -72,12 +77,17 @@ REFRESH_INTERVAL=5      # seconds (used in watch mode)
 LOG_FOLLOW=false
 WATCH_MODE=false        # when true, auto-refreshes every REFRESH_INTERVAL seconds
 READONLY=false          # when true, blocks destructive actions (delete, restart, exec)
+ALL_KIND_FILTER="all"   # all | pods | deploys | statefulsets | daemonsets | replicasets | jobs | cronjobs
+ALL_INCLUDE_MORE=false   # include services/configmaps/ingresses/pvcs when true
+ALL_FAIL_ONLY=false      # show only failed/problem rows when true
 
 # Per-view load tracking — key is "view:namespace", value=1 when loaded
 declare -A VIEW_LOADED=()
 
 # View index for header tabs
 declare -A VIEW_IDX=([pods]=1 [deploys]=2 [nodes]=3 [events]=4 [argocd]=5 [certs]=6)
+
+ALL_KIND_FILTER_ORDER=("all" "pods" "deploys" "statefulsets" "daemonsets" "replicasets" "jobs" "cronjobs")
 
 # Store fetched data globally to avoid re-fetching on every keypress
 declare -a DATA_LINES=()
@@ -211,6 +221,7 @@ _draw_tabs() {
   # View label map
   local view_label
   case "$CURRENT_VIEW" in
+    all)        view_label="All"         ;;
     pods)       view_label="Pods"        ;;
     deploys)    view_label="Deployments" ;;
     nodes)      view_label="Nodes"       ;;
@@ -327,7 +338,10 @@ _draw_statusbar() {
     $WATCH_MODE && watch_color="$C_ORANGE"
 
     if (( TERM_COLS < 105 )); then
-      if [[ "$CURRENT_VIEW" == "secrets" ]]; then
+      if [[ "$CURRENT_VIEW" == "all" ]]; then
+        printf '%b[f]%b failures  %b[K]%b workload  %b[m]%b more  %b[/]%b filter  %b[:]%b view  %b[n]%b ns  %b[q]%b quit' \
+          "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
+      elif [[ "$CURRENT_VIEW" == "secrets" ]]; then
         printf '%b[x]%b decode  %b[w]%b watch  %b[/]%b filter  %b[:]%b view  %b[n]%b ns  %b[q]%b quit' \
           "$k" "$r" "$watch_color" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
       else
@@ -335,7 +349,10 @@ _draw_statusbar() {
           "$watch_color" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
       fi
     elif (( TERM_COLS < 140 )); then
-      if [[ "$CURRENT_VIEW" == "pods" ]]; then
+      if [[ "$CURRENT_VIEW" == "all" ]]; then
+        printf '%b[Enter]%b describe  %b[f]%b failures  %b[K]%b workload  %b[m]%b more  %b[/]%b filter  %b[:]%b view  %b[n]%b ns  %b[q]%b quit' \
+          "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
+      elif [[ "$CURRENT_VIEW" == "pods" ]]; then
         printf '%b[l]%b logs  %b[e]%b exec  %b[r]%b restart  %b[D]%b delete  %b[/]%b filter  %b[:]%b view  %b[n]%b ns  %b[C]%b ctx  %b[q]%b quit' \
           "$k" "$r" "$k" "$r" "$k" "$r" "$C_RED" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
       elif [[ "$CURRENT_VIEW" == "secrets" ]]; then
@@ -346,7 +363,10 @@ _draw_statusbar() {
           "$watch_color" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
       fi
     else
-      if [[ "$CURRENT_VIEW" == "pods" ]]; then
+      if [[ "$CURRENT_VIEW" == "all" ]]; then
+        printf '%b[Enter]%b describe  %b[f]%b failures  %b[K]%b workload  %b[m]%b more  %b[w]%b watch  %b[:]%b view  %b[/]%b filter  %b[n]%b ns  %b[C]%b ctx  %b[R]%b refresh  %b[?]%b help  %b[q]%b quit' \
+          "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$watch_color" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
+      elif [[ "$CURRENT_VIEW" == "pods" ]]; then
         printf '%b[l]%b logs  %b[e]%b exec  %b[v]%b prev-logs  %b[t]%b top  %b[f]%b fwd  %b[r]%b restart  %b[D]%b delete  %b[w]%b watch  %b[:]%b view  %b[/]%b filter  %b[n]%b ns  %b[C]%b ctx  %b[R]%b refresh  %b[?]%b help  %b[q]%b quit' \
           "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$C_RED" "$r" "$watch_color" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
       elif [[ "$CURRENT_VIEW" == "secrets" ]]; then
@@ -446,6 +466,23 @@ _human_age() {
   else
     printf '%dd' $(( diff / 86400 ))
   fi
+}
+
+API_RESOURCES_CACHE=""
+
+_resource_supported() {
+  local resource="$1"
+
+  # Cache discovery results to avoid repeated expensive API calls.
+  if [[ -z "$API_RESOURCES_CACHE" ]]; then
+    API_RESOURCES_CACHE=$(kubectl api-resources --verbs=list -o name 2>/dev/null || true)
+  fi
+
+  # If discovery fails (RBAC, transient API issue), do not block rendering.
+  [[ -z "$API_RESOURCES_CACHE" ]] && return 0
+
+  # Matches both core names (pods) and grouped names (deployments.apps).
+  printf '%s\n' "$API_RESOURCES_CACHE" | grep -Eq "^${resource}(\\.|$)"
 }
 
 # ── Data fetchers ──────────────────────────────────────────
@@ -893,6 +930,208 @@ _fetch_hpa() {
   )
 }
 
+_fetch_all() {
+  local ns_flag
+  [[ "$CURRENT_NS" == "all" ]] && ns_flag="-A" || ns_flag="-n $CURRENT_NS"
+  local sep=$'\t'
+
+  local -a rows=()
+
+  # Pods
+  if _resource_supported "pods"; then
+    while IFS=$'\t' read -r ns name phase wait_reason age; do
+      [[ -z "$name" ]] && continue
+      local status="$phase"
+      if [[ -n "$wait_reason" && "$wait_reason" != "<none>" ]]; then
+        status="$wait_reason"
+      fi
+      rows+=("pods${sep}${ns}${sep}${name}${sep}${status}${sep}$(_human_age "$age")${sep}pod")
+    done < <(
+      kubectl get pods $ns_flag --no-headers \
+        -o custom-columns='NS:.metadata.namespace,NAME:.metadata.name,PHASE:.status.phase,WAIT:.status.containerStatuses[0].state.waiting.reason,AGE:.metadata.creationTimestamp' \
+        2>/dev/null \
+      | awk '{printf "%s\t%s\t%s\t%s\t%s\n",$1,$2,$3,$4,$5}'
+    )
+  fi
+
+  # Deployments
+  if _resource_supported "deployments"; then
+    while IFS=$'\t' read -r ns name ready desired age; do
+      [[ -z "$name" ]] && continue
+      ready="${ready:-0}"; desired="${desired:-0}"
+      [[ "$ready" == "<none>" ]] && ready=0
+      [[ "$desired" == "<none>" ]] && desired=0
+      local status="Healthy"
+      (( ready < desired )) && status="Degraded"
+      rows+=("deploys${sep}${ns}${sep}${name}${sep}${status}${sep}$(_human_age "$age")${sep}deployment")
+    done < <(
+      kubectl get deployments $ns_flag --no-headers \
+        -o custom-columns='NS:.metadata.namespace,NAME:.metadata.name,READY:.status.readyReplicas,DESIRED:.spec.replicas,AGE:.metadata.creationTimestamp' \
+        2>/dev/null \
+      | awk '{printf "%s\t%s\t%s\t%s\t%s\n",$1,$2,$3,$4,$5}'
+    )
+  fi
+
+  # StatefulSets
+  if _resource_supported "statefulsets"; then
+    while IFS=$'\t' read -r ns name ready desired age; do
+      [[ -z "$name" ]] && continue
+      ready="${ready:-0}"; desired="${desired:-0}"
+      [[ "$ready" == "<none>" ]] && ready=0
+      [[ "$desired" == "<none>" ]] && desired=0
+      local status="Healthy"
+      (( ready < desired )) && status="Degraded"
+      rows+=("statefulsets${sep}${ns}${sep}${name}${sep}${status}${sep}$(_human_age "$age")${sep}statefulset")
+    done < <(
+      kubectl get statefulsets $ns_flag --no-headers \
+        -o custom-columns='NS:.metadata.namespace,NAME:.metadata.name,READY:.status.readyReplicas,DESIRED:.spec.replicas,AGE:.metadata.creationTimestamp' \
+        2>/dev/null \
+      | awk '{printf "%s\t%s\t%s\t%s\t%s\n",$1,$2,$3,$4,$5}'
+    )
+  fi
+
+  # DaemonSets
+  if _resource_supported "daemonsets"; then
+    while IFS=$'\t' read -r ns name ready desired age; do
+      [[ -z "$name" ]] && continue
+      ready="${ready:-0}"; desired="${desired:-0}"
+      [[ "$ready" == "<none>" ]] && ready=0
+      [[ "$desired" == "<none>" ]] && desired=0
+      local status="Healthy"
+      (( ready < desired )) && status="Degraded"
+      rows+=("daemonsets${sep}${ns}${sep}${name}${sep}${status}${sep}$(_human_age "$age")${sep}daemonset")
+    done < <(
+      kubectl get daemonsets $ns_flag --no-headers \
+        -o custom-columns='NS:.metadata.namespace,NAME:.metadata.name,READY:.status.numberReady,DESIRED:.status.desiredNumberScheduled,AGE:.metadata.creationTimestamp' \
+        2>/dev/null \
+      | awk '{printf "%s\t%s\t%s\t%s\t%s\n",$1,$2,$3,$4,$5}'
+    )
+  fi
+
+  # ReplicaSets
+  if _resource_supported "replicasets"; then
+    while IFS=$'\t' read -r ns name ready desired age; do
+      [[ -z "$name" ]] && continue
+      ready="${ready:-0}"; desired="${desired:-0}"
+      [[ "$ready" == "<none>" ]] && ready=0
+      [[ "$desired" == "<none>" ]] && desired=0
+      local status="Healthy"
+      (( desired == 0 )) && status="ScaledDown"
+      (( desired > 0 && ready < desired )) && status="Degraded"
+      rows+=("replicasets${sep}${ns}${sep}${name}${sep}${status}${sep}$(_human_age "$age")${sep}replicaset")
+    done < <(
+      kubectl get replicasets $ns_flag --no-headers \
+        -o custom-columns='NS:.metadata.namespace,NAME:.metadata.name,READY:.status.readyReplicas,DESIRED:.spec.replicas,AGE:.metadata.creationTimestamp' \
+        2>/dev/null \
+      | awk '{printf "%s\t%s\t%s\t%s\t%s\n",$1,$2,$3,$4,$5}'
+    )
+  fi
+
+  # Jobs
+  if _resource_supported "jobs"; then
+    while IFS=$'\t' read -r ns name succ failed desired age; do
+      [[ -z "$name" ]] && continue
+      succ="${succ:-0}"; failed="${failed:-0}"; desired="${desired:-1}"
+      [[ "$succ" == "<none>" ]] && succ=0
+      [[ "$failed" == "<none>" ]] && failed=0
+      [[ "$desired" == "<none>" ]] && desired=1
+      local status="Running"
+      (( failed > 0 )) && status="Failed"
+      (( succ >= desired )) && status="Complete"
+      rows+=("jobs${sep}${ns}${sep}${name}${sep}${status}${sep}$(_human_age "$age")${sep}job")
+    done < <(
+      kubectl get jobs $ns_flag --no-headers \
+        -o custom-columns='NS:.metadata.namespace,NAME:.metadata.name,SUCC:.status.succeeded,FAIL:.status.failed,DESIRED:.spec.completions,AGE:.metadata.creationTimestamp' \
+        2>/dev/null \
+      | awk '{printf "%s\t%s\t%s\t%s\t%s\t%s\n",$1,$2,$3,$4,$5,$6}'
+    )
+  fi
+
+  # CronJobs
+  if _resource_supported "cronjobs"; then
+    while IFS=$'\t' read -r ns name suspended active age; do
+      [[ -z "$name" ]] && continue
+      active="${active:-0}"
+      [[ "$active" == "<none>" || -z "$active" ]] && active=0
+      local status="Idle"
+      [[ "$suspended" == "true" ]] && status="Suspended"
+      (( active > 0 )) && status="Active"
+      rows+=("cronjobs${sep}${ns}${sep}${name}${sep}${status}${sep}$(_human_age "$age")${sep}cronjob")
+    done < <(
+      kubectl get cronjobs $ns_flag --no-headers \
+        -o custom-columns='NS:.metadata.namespace,NAME:.metadata.name,SUSP:.spec.suspend,ACTIVE:.status.active[*].name,AGE:.metadata.creationTimestamp' \
+        2>/dev/null \
+      | awk '{
+          a=$4
+          if (a=="<none>" || a=="") ac=0
+          else ac=split(a,tmp,",")
+          printf "%s\t%s\t%s\t%d\t%s\n",$1,$2,$3,ac,$5
+        }'
+    )
+  fi
+
+  # Optional additional kinds
+  if $ALL_INCLUDE_MORE; then
+    if _resource_supported "services"; then
+      while IFS=$'\t' read -r ns name type age; do
+        [[ -z "$name" ]] && continue
+        rows+=("services${sep}${ns}${sep}${name}${sep}${type}${sep}$(_human_age "$age")${sep}service")
+      done < <(
+        kubectl get services $ns_flag --no-headers \
+          -o custom-columns='NS:.metadata.namespace,NAME:.metadata.name,TYPE:.spec.type,AGE:.metadata.creationTimestamp' \
+          2>/dev/null \
+        | awk '{printf "%s\t%s\t%s\t%s\n",$1,$2,$3,$4}'
+      )
+    fi
+
+    if _resource_supported "configmaps"; then
+      while IFS=$'\t' read -r ns name age; do
+        [[ -z "$name" ]] && continue
+        rows+=("configmaps${sep}${ns}${sep}${name}${sep}Present${sep}$(_human_age "$age")${sep}configmap")
+      done < <(
+        kubectl get configmaps $ns_flag --no-headers \
+          -o custom-columns='NS:.metadata.namespace,NAME:.metadata.name,AGE:.metadata.creationTimestamp' \
+          2>/dev/null \
+        | awk '{printf "%s\t%s\t%s\n",$1,$2,$3}'
+      )
+    fi
+
+    if _resource_supported "ingresses"; then
+      while IFS=$'\t' read -r ns name class age; do
+        [[ -z "$name" ]] && continue
+        [[ -z "$class" || "$class" == "<none>" ]] && class="Ingress"
+        rows+=("ingresses${sep}${ns}${sep}${name}${sep}${class}${sep}$(_human_age "$age")${sep}ingress")
+      done < <(
+        kubectl get ingresses $ns_flag --no-headers \
+          -o custom-columns='NS:.metadata.namespace,NAME:.metadata.name,CLASS:.spec.ingressClassName,AGE:.metadata.creationTimestamp' \
+          2>/dev/null \
+        | awk '{printf "%s\t%s\t%s\t%s\n",$1,$2,$3,$4}'
+      )
+    fi
+
+    if _resource_supported "persistentvolumeclaims"; then
+      while IFS=$'\t' read -r ns name status age; do
+        [[ -z "$name" ]] && continue
+        rows+=("pvcs${sep}${ns}${sep}${name}${sep}${status}${sep}$(_human_age "$age")${sep}persistentvolumeclaim")
+      done < <(
+        kubectl get pvc $ns_flag --no-headers \
+          -o custom-columns='NS:.metadata.namespace,NAME:.metadata.name,STATUS:.status.phase,AGE:.metadata.creationTimestamp' \
+          2>/dev/null \
+        | awk '{printf "%s\t%s\t%s\t%s\n",$1,$2,$3,$4}'
+      )
+    fi
+  fi
+
+  DATA_LINES=()
+  local kind
+  for kind in pods deploys statefulsets daemonsets replicasets jobs cronjobs services configmaps ingresses pvcs; do
+    local line
+    for line in "${rows[@]}"; do
+      [[ "$line" == "$kind"$'\t'* ]] && DATA_LINES+=("$line")
+    done
+  done
+}
+
 _fetch_namespaces() {
   mapfile -t DATA_LINES < <(
     # Always include "all" as the first option
@@ -1245,6 +1484,7 @@ _render_generic() {
 
 _refresh_data() {
   case "$CURRENT_VIEW" in
+    all)        _fetch_all        ;;
     pods)       _fetch_pods       ;;
     deploys)    _fetch_deploys    ;;
     nodes)      _fetch_nodes      ;;
@@ -1272,10 +1512,43 @@ _refresh_data() {
 # ── Filter data ────────────────────────────────────────────
 
 _filtered_lines() {
+  local -a source_lines=()
+  local _line
+  for _line in "${DATA_LINES[@]}"; do
+    [[ -n "$_line" ]] && source_lines+=("$_line")
+  done
+
+  (( ${#source_lines[@]} == 0 )) && return
+
+  if [[ "$CURRENT_VIEW" == "all" ]]; then
+    local lines
+    lines=$(printf '%s\n' "${source_lines[@]}")
+
+    if [[ "$ALL_KIND_FILTER" != "all" ]]; then
+      lines=$(printf '%s\n' "$lines" | awk -F '\t' -v k="$ALL_KIND_FILTER" '$1==k')
+    fi
+
+    if $ALL_FAIL_ONLY; then
+      lines=$(printf '%s\n' "$lines" | grep -Ei 'CrashLoopBackOff|ImagePullBackOff|Failed|Error|Degraded|OOMKilled' || true)
+    fi
+
+    if [[ -n "$FILTER" ]]; then
+      local filtered
+      filtered=$(printf '%s\n' "$lines" | grep -i "$FILTER" 2>/dev/null || true)
+      [[ -z "$filtered" ]] && return
+      printf '%s\n' "$filtered"
+      return
+    fi
+
+    [[ -z "$lines" ]] && return
+    printf '%s\n' "$lines"
+    return
+  fi
+
   if [[ -z "$FILTER" ]]; then
-    printf '%s\n' "${DATA_LINES[@]}"
+    printf '%s\n' "${source_lines[@]}"
   else
-    printf '%s\n' "${DATA_LINES[@]}" | grep -i "$FILTER" 2>/dev/null || true
+    printf '%s\n' "${source_lines[@]}" | grep -i "$FILTER" 2>/dev/null || true
   fi
 }
 
@@ -2246,6 +2519,91 @@ _render_hpa() {
   printf '%b%d HPAs%b' "$C_LGRAY" "${#filtered[@]}" "$C_RESET"
 }
 
+_render_all() {
+  local start_row=4
+  TERM_COLS=$(tput cols 2>/dev/null || echo 120)
+
+  local w_kind=10 w_ns=14 w_status=18 w_age=6
+  local fixed=$(( 1 + w_kind + 1 + w_ns + 1 + 1 + w_status + 1 + w_age ))
+  local w_name=$(( TERM_COLS - fixed ))
+  (( w_name < 18 )) && w_name=18
+
+  _at $start_row 1
+  printf '%b%b %-*s %-*s %-*s %-*s %-*s%b' \
+    "$C_BOLD" "$C_DCYAN" \
+    "$w_kind" "KIND" "$w_ns" "NS" \
+    "$w_name" "NAME" "$w_status" "STATUS" "$w_age" "AGE" \
+    "$C_RESET"
+  _eol
+  _hline $(( start_row+1 )) 1 "$TERM_COLS" "-" "$C_GRAY"
+
+  local row=$(( start_row+2 ))
+  local filtered=(); mapfile -t filtered < <(_filtered_lines)
+  local _vis=$(( TERM_ROWS - 4 - start_row ))
+  local _end=$(( SCROLL_OFFSET + _vis ))
+  (( _end > ${#filtered[@]} )) && _end=${#filtered[@]}
+
+  local idx
+  for (( idx=SCROLL_OFFSET; idx<_end; idx++ )); do
+    local line="${filtered[$idx]}"
+    (( row > TERM_ROWS - 4 )) && break
+    IFS=$'\t' read -r kind ns name status age _res <<< "$line"
+
+    local kc="$C_WHITE"
+    [[ "$kind" == "pods" ]] && kc="$C_CYAN"
+    [[ "$kind" == "deploys" ]] && kc="$C_GREEN"
+    [[ "$kind" == "statefulsets" ]] && kc="$C_GREEN"
+    [[ "$kind" == "daemonsets" ]] && kc="$C_GREEN"
+    [[ "$kind" == "replicasets" ]] && kc="$C_GREEN"
+    [[ "$kind" == "services" ]] && kc="$C_YELLOW"
+    [[ "$kind" == "jobs" || "$kind" == "cronjobs" ]] && kc="$C_MAGENTA"
+
+    local sc; sc=$(_status_color "$status")
+
+    local name_disp="$name"
+    if (( ${#name_disp} > w_name )); then
+      name_disp="${name_disp:0:$(( w_name - 3 ))}..."
+    fi
+
+    _at "$row" 1
+    local _rrst="$C_RESET"
+    if (( idx == SELECTED_IDX )); then
+      printf '%b' "$BG_SEL"
+      _rrst="$SEL_RST$BG_SEL"
+    fi
+
+    printf ' %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b %-*s' \
+      "$kc"      "$w_kind"  "${kind:0:$w_kind}" \
+      "$_rrst" "$C_GRAY"  "$w_ns"    "${ns:0:$w_ns}" \
+      "$_rrst" "$C_WHITE" "$w_name"  "$name_disp" \
+      "$_rrst" "$sc"      "$w_status" "${status:0:$w_status}" \
+      "$_rrst" "$w_age"   "${age:0:$w_age}"
+
+    printf '%b' "$_rrst"; _eol; printf '%b' "$C_RESET"
+    (( row++ ))
+  done
+
+  if (( ${#filtered[@]} == 0 )); then
+    _at $(( start_row+4 )) $(( TERM_COLS/2-12 ))
+    printf '%bNo resources found%b' "$C_GRAY" "$C_RESET"
+  fi
+
+  local fail_count=0
+  local l
+  for l in "${filtered[@]}"; do
+    if [[ "$l" =~ CrashLoopBackOff|ImagePullBackOff|Failed|Error|Degraded|OOMKilled ]]; then
+      (( fail_count++ ))
+    fi
+  done
+
+  _at $(( TERM_ROWS-2 )) 2
+  printf '%b%d rows%b  %bkind:%b %s  %bfailures:%b %d  %bmore:%b %s' \
+    "$C_LGRAY" "${#filtered[@]}" "$C_RESET" \
+    "$C_GRAY" "$C_RESET" "$ALL_KIND_FILTER" \
+    "$C_GRAY" "$C_RESET" "$fail_count" \
+    "$C_GRAY" "$C_RESET" "$($ALL_INCLUDE_MORE && echo on || echo off)"
+}
+
 _render_namespaces() {
   local start_row=4
   TERM_COLS=$(tput cols 2>/dev/null || echo 120)
@@ -3075,6 +3433,7 @@ _pick_context() {
         kubectl config use-context "${contexts[$idx]}" &>/dev/null
         CURRENT_CTX="${contexts[$idx]}"
         CURRENT_NS="all"
+        API_RESOURCES_CACHE=""
         SELECTED_IDX=0
         VIEW_LOADED=()
         LAST_REFRESH=0
@@ -3106,6 +3465,7 @@ _help_section() {
 _show_help() {
   local -a help_lines=(
     "## Navigation"
+    "0                       Compact All resources view"
     "↑↓ / j k                Move selection up/down"
     "Enter                   Describe / drill into selected resource"
     "Tab                     Next view (cycles all 15)"
@@ -3127,6 +3487,9 @@ _show_help() {
     "d                       Describe selected resource"
     ""
     "## Actions (Other views)"
+    "f                       Failures-only toggle (All/workloads view)"
+    "K                       Cycle workload filter (All view)"
+    "m                       Toggle include-more non-workloads (All view)"
     "x                       Decode secret (Secrets view)"
     "f                       Port-forward (Services view)"
     "t                       kubectl top nodes (Nodes view)"
@@ -3281,6 +3644,10 @@ _clamp_scroll() {
 _switch_view() {
   local view="$1"
   CURRENT_VIEW="$view"
+  if [[ "$view" == "all" ]]; then
+    ALL_FAIL_ONLY=false
+    ALL_KIND_FILTER="all"
+  fi
   SELECTED_IDX=0
   SCROLL_OFFSET=0
   FILTER=""
@@ -3293,6 +3660,7 @@ _switch_view() {
 # Palette aliases → kubectl resource type (used for generic fetch)
 # The rich pre-built views are still on 1-9 keys
 declare -A KX_ALIASES=(
+  [all]="all"
   [po]="pods"              [pod]="pods"            [pods]="pods"
   [dep]="deployments"      [deploy]="deployments"  [deploys]="deployments"  [deployment]="deployments"
   [no]="nodes"             [node]="nodes"           [nodes]="nodes"
@@ -3318,6 +3686,7 @@ declare -A KX_ALIASES=(
 
 # Display order and labels for the palette suggestions
 declare -A KX_LABELS=(
+  [all]="all"
   [po]="pods"               [dep]="deployments"      [no]="nodes"
   [ev]="events"             [app]="applications"     [cert]="certificates"
   [sec]="secrets"           [svc]="services"         [cm]="configmaps"
@@ -3327,7 +3696,7 @@ declare -A KX_LABELS=(
   [sa]="serviceaccounts"    [rb]="rolebindings"      [crd]="crds"
 )
 
-KX_ALIAS_DISPLAY=(po dep no ev app cert sec svc cm pvc ing job cj hpa ns rs sts ds sa rb crd)
+KX_ALIAS_DISPLAY=(all po dep no ev app cert sec svc cm pvc ing job cj hpa ns rs sts ds sa rb crd)
 _draw_palette() {
   local inp="$1"
   TERM_ROWS=$(tput lines 2>/dev/null || echo 40)
@@ -3418,6 +3787,7 @@ _command_palette() {
         # Map well-known resources to rich pre-built views
         # Everything else goes to the generic kubectl view
         case "$resource" in
+          all)                     _switch_view "all"        ;;
           pods)                    _switch_view "pods"       ;;
           deployments)             _switch_view "deploys"    ;;
           nodes)                   _switch_view "nodes"      ;;
@@ -3716,6 +4086,7 @@ _render_view() {
   _draw_tabs
 
   case "$CURRENT_VIEW" in
+    all)        _render_all        ;;
     pods)       _render_pods       ;;
     deploys)    _render_deploys    ;;
     nodes)      _render_nodes      ;;
@@ -3777,6 +4148,7 @@ _main_loop() {
       '?') _show_help; _clear; DETAIL_MODE=false ;;
 
       # ── View switching ─────────────────────────────────────
+      0)   _switch_view "all"       ;;
       1|p) _switch_view "pods"      ;;
       2)   _switch_view "deploys"   ;;
       3)   _switch_view "nodes"     ;;
@@ -3795,7 +4167,7 @@ _main_loop() {
 
       # ── Tab navigation ────────────────────────────────────
       $'\t')
-        local views=("pods" "deploys" "nodes" "events" "argocd" "certs" "secrets" "services" "helm" "configmaps" "pvcs" "ingresses" "jobs" "cronjobs" "hpa" "namespaces")
+        local views=("all" "pods" "deploys" "nodes" "events" "argocd" "certs" "secrets" "services" "helm" "configmaps" "pvcs" "ingresses" "jobs" "cronjobs" "hpa" "namespaces")
         local cur_idx=0
         for i in "${!views[@]}"; do [[ "${views[$i]}" == "$CURRENT_VIEW" ]] && cur_idx=$i; done
         _switch_view "${views[$(( (cur_idx+1) % ${#views[@]} ))]}"
@@ -3825,7 +4197,7 @@ _main_loop() {
             fi
             ;;
           "[Z") # Shift-Tab
-            local views=("pods" "deploys" "nodes" "events" "argocd" "certs" "secrets" "services" "helm" "configmaps" "pvcs" "ingresses" "jobs" "cronjobs" "hpa" "namespaces")
+            local views=("all" "pods" "deploys" "nodes" "events" "argocd" "certs" "secrets" "services" "helm" "configmaps" "pvcs" "ingresses" "jobs" "cronjobs" "hpa" "namespaces")
             local cur_idx=0
             for i in "${!views[@]}"; do [[ "${views[$i]}" == "$CURRENT_VIEW" ]] && cur_idx=$i; done
             _switch_view "${views[$(( (cur_idx-1+${#views[@]}) % ${#views[@]} ))]}"
@@ -3833,9 +4205,24 @@ _main_loop() {
         esac
         ;;
 
-      k) # Up (vim)
+      k)
         local filtered=(); mapfile -t filtered < <(_filtered_lines)
         (( SELECTED_IDX > 0 )) && (( SELECTED_IDX-- ))
+        ;;
+
+      K)
+        if [[ "$CURRENT_VIEW" == "all" ]]; then
+          local i
+          for i in "${!ALL_KIND_FILTER_ORDER[@]}"; do
+            if [[ "${ALL_KIND_FILTER_ORDER[$i]}" == "$ALL_KIND_FILTER" ]]; then
+              local ni=$(( (i + 1) % ${#ALL_KIND_FILTER_ORDER[@]} ))
+              ALL_KIND_FILTER="${ALL_KIND_FILTER_ORDER[$ni]}"
+              break
+            fi
+          done
+          SELECTED_IDX=0
+          SCROLL_OFFSET=0
+        fi
         ;;
       j) # Down (vim)
         local filtered=(); mapfile -t filtered < <(_filtered_lines)
@@ -3898,6 +4285,12 @@ _main_loop() {
         [[ "$CURRENT_VIEW" == "cronjobs"   ]] && res="cronjob"
         [[ "$CURRENT_VIEW" == "hpa"        ]] && res="horizontalpodautoscaler"
         [[ "$CURRENT_VIEW" == "generic"    ]] && res="$GENERIC_RESOURCE"
+        if [[ "$CURRENT_VIEW" == "all" ]]; then
+          IFS=$'\t' read -r _ all_ns all_name _ _ all_res <<< "$line"
+          ns="$all_ns"
+          name="$all_name"
+          res="$all_res"
+        fi
 
         # Nodes and generic have no namespace column or different layout
         if [[ "$CURRENT_VIEW" == "nodes" ]]; then
@@ -3983,7 +4376,10 @@ _main_loop() {
         local line; line=$(_selected_line) || continue
         local res="pods"
         local desc_name desc_ns
-        if [[ "$CURRENT_VIEW" == "nodes" ]]; then
+        if [[ "$CURRENT_VIEW" == "all" ]]; then
+          IFS=$'\t' read -r _ desc_ns desc_name _ _ desc_res <<< "$line"
+          res="$desc_res"
+        elif [[ "$CURRENT_VIEW" == "nodes" ]]; then
           # nodes: name\tstatus\trole\tversion\tarch\tage  (no namespace)
           IFS=$'\t' read -r desc_name _ <<< "$line"
           desc_ns="default"
@@ -4063,13 +4459,34 @@ _main_loop() {
 
       # ── Port-forward ──────────────────────────────────────
       f|F)
-        if [[ "$CURRENT_VIEW" == "pods" || "$CURRENT_VIEW" == "services" ]]; then
+        if [[ "$CURRENT_VIEW" == "all" ]]; then
+          if $ALL_FAIL_ONLY; then
+            ALL_FAIL_ONLY=false
+          else
+            ALL_FAIL_ONLY=true
+          fi
+          SELECTED_IDX=0
+          SCROLL_OFFSET=0
+        elif [[ "$CURRENT_VIEW" == "pods" || "$CURRENT_VIEW" == "services" ]]; then
           local line; line=$(_selected_line) || continue
           IFS=$'\t' read -r ns name _ <<< "$line"
           local res="pod"
           [[ "$CURRENT_VIEW" == "services" ]] && res="service"
           _port_forward "$res" "$name" "$ns"
           _clear
+        fi
+        ;;
+
+      m|M)
+        if [[ "$CURRENT_VIEW" == "all" ]]; then
+          if $ALL_INCLUDE_MORE; then
+            ALL_INCLUDE_MORE=false
+          else
+            ALL_INCLUDE_MORE=true
+          fi
+          LAST_REFRESH=0
+          SELECTED_IDX=0
+          SCROLL_OFFSET=0
         fi
         ;;
 
@@ -4180,6 +4597,7 @@ Usage: kube-dash [options]
   --context <ctx>         Use context
   --interval <secs>       Watch mode refresh interval (default: 5)
   -v, --view <view>       Start view: pods|deploys|nodes|events|argocd|certs
+                          Also: all|secrets|services|helm|configmaps|pvcs|ingresses|jobs|cronjobs|hpa|namespaces
   --readonly              Disable destructive actions (delete, restart, exec)
   --help                  This help
 EOF
