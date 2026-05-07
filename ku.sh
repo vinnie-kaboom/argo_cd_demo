@@ -77,7 +77,7 @@ REFRESH_INTERVAL=5      # seconds (used in watch mode)
 LOG_FOLLOW=false
 WATCH_MODE=false        # when true, auto-refreshes every REFRESH_INTERVAL seconds
 READONLY=false          # when true, blocks destructive actions (delete, restart, exec)
-ALL_KIND_FILTER="all"   # all | pods | deploys | statefulsets | daemonsets | replicasets | jobs | cronjobs
+ALL_KIND_FILTER="all"   # all | pods | applications | deploys | statefulsets | daemonsets | replicasets | jobs | cronjobs
 ALL_INCLUDE_MORE=false   # include services/configmaps/ingresses/pvcs when true
 ALL_FAIL_ONLY=false      # show only failed/problem rows when true
 
@@ -87,7 +87,7 @@ declare -A VIEW_LOADED=()
 # View index for header tabs
 declare -A VIEW_IDX=([pods]=1 [deploys]=2 [nodes]=3 [events]=4 [argocd]=5 [certs]=6)
 
-ALL_KIND_FILTER_ORDER=("all" "pods" "deploys" "statefulsets" "daemonsets" "replicasets" "jobs" "cronjobs")
+ALL_KIND_FILTER_ORDER=("all" "pods" "applications" "deploys" "statefulsets" "daemonsets" "replicasets" "jobs" "cronjobs")
 
 # Store fetched data globally to avoid re-fetching on every keypress
 declare -a DATA_LINES=()
@@ -954,6 +954,24 @@ _fetch_all() {
     )
   fi
 
+  # Argo Applications (if CRD exists)
+  if _resource_supported "applications"; then
+    while IFS=$'\t' read -r ns name sync health age; do
+      [[ -z "$name" ]] && continue
+      local status="$health"
+      [[ -z "$status" || "$status" == "<none>" ]] && status="Unknown"
+      if [[ "$sync" != "Synced" && -n "$sync" && "$sync" != "<none>" ]]; then
+        status="$sync"
+      fi
+      rows+=("applications${sep}${ns}${sep}${name}${sep}${status}${sep}$(_human_age "$age")${sep}application.argoproj.io")
+    done < <(
+      kubectl get applications.argoproj.io $ns_flag --no-headers \
+        -o custom-columns='NS:.metadata.namespace,NAME:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status,AGE:.metadata.creationTimestamp' \
+        2>/dev/null \
+      | awk '{printf "%s\t%s\t%s\t%s\t%s\n",$1,$2,$3,$4,$5}'
+    )
+  fi
+
   # Deployments
   if _resource_supported "deployments"; then
     while IFS=$'\t' read -r ns name ready desired age; do
@@ -1124,7 +1142,7 @@ _fetch_all() {
 
   DATA_LINES=()
   local kind
-  for kind in pods deploys statefulsets daemonsets replicasets jobs cronjobs services configmaps ingresses pvcs; do
+  for kind in pods applications deploys statefulsets daemonsets replicasets jobs cronjobs services configmaps ingresses pvcs; do
     local line
     for line in "${rows[@]}"; do
       [[ "$line" == "$kind"$'\t'* ]] && DATA_LINES+=("$line")
@@ -2551,6 +2569,7 @@ _render_all() {
 
     local kc="$C_WHITE"
     [[ "$kind" == "pods" ]] && kc="$C_CYAN"
+    [[ "$kind" == "applications" ]] && kc="$C_BLUE"
     [[ "$kind" == "deploys" ]] && kc="$C_GREEN"
     [[ "$kind" == "statefulsets" ]] && kc="$C_GREEN"
     [[ "$kind" == "daemonsets" ]] && kc="$C_GREEN"
@@ -3488,7 +3507,7 @@ _show_help() {
     ""
     "## Actions (Other views)"
     "f                       Failures-only toggle (All/workloads view)"
-    "K                       Cycle workload filter (All view)"
+    "K                       Cycle workload filter (All view, includes applications)"
     "m                       Toggle include-more non-workloads (All view)"
     "x                       Decode secret (Secrets view)"
     "f                       Port-forward (Services view)"
