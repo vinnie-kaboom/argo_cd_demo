@@ -19,13 +19,14 @@
 #    K                   Cycle kind filter (All view)
 #    f                   Failures only toggle (All view)
 #    m                   Toggle more kinds (All view)
+#    s                   ArgoCD sync (in ArgoCD view)
 #    n                   Switch namespace
-#    c                   Switch context
-#    f                   Toggle follow logs
+#    C                   Switch context
+#    w                   Toggle watch mode
+#    f                   Port-forward (pods/services)
 #    q / Ctrl-C          Quit / back
 #    ?                   Help screen
-#    1-6                 Jump to view
-#    0                   Compact All-resources view
+#    1-9                 Jump to view
 # ============================================================
 
 set -o pipefail
@@ -341,6 +342,9 @@ _draw_statusbar() {
       if [[ "$CURRENT_VIEW" == "all" ]]; then
         printf '%b[f]%b failures  %b[K]%b workload  %b[m]%b more  %b[/]%b filter  %b[:]%b view  %b[n]%b ns  %b[q]%b quit' \
           "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
+      elif [[ "$CURRENT_VIEW" == "argocd" ]]; then
+        printf '%b[s]%b sync  %b[Enter]%b tree  %b[/]%b filter  %b[:]%b view  %b[n]%b ns  %b[q]%b quit' \
+          "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
       elif [[ "$CURRENT_VIEW" == "secrets" ]]; then
         printf '%b[x]%b decode  %b[w]%b watch  %b[/]%b filter  %b[:]%b view  %b[n]%b ns  %b[q]%b quit' \
           "$k" "$r" "$watch_color" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
@@ -352,6 +356,9 @@ _draw_statusbar() {
       if [[ "$CURRENT_VIEW" == "all" ]]; then
         printf '%b[Enter]%b describe  %b[f]%b failures  %b[K]%b workload  %b[m]%b more  %b[/]%b filter  %b[:]%b view  %b[n]%b ns  %b[q]%b quit' \
           "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
+      elif [[ "$CURRENT_VIEW" == "argocd" ]]; then
+        printf '%b[s]%b sync  %b[Enter]%b tree  %b[w]%b watch  %b[/]%b filter  %b[:]%b view  %b[n]%b ns  %b[q]%b quit' \
+          "$k" "$r" "$k" "$r" "$watch_color" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
       elif [[ "$CURRENT_VIEW" == "pods" ]]; then
         printf '%b[l]%b logs  %b[e]%b exec  %b[r]%b restart  %b[D]%b delete  %b[/]%b filter  %b[:]%b view  %b[n]%b ns  %b[C]%b ctx  %b[q]%b quit' \
           "$k" "$r" "$k" "$r" "$k" "$r" "$C_RED" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
@@ -366,6 +373,9 @@ _draw_statusbar() {
       if [[ "$CURRENT_VIEW" == "all" ]]; then
         printf '%b[Enter]%b describe  %b[f]%b failures  %b[K]%b workload  %b[m]%b more  %b[w]%b watch  %b[:]%b view  %b[/]%b filter  %b[n]%b ns  %b[C]%b ctx  %b[R]%b refresh  %b[?]%b help  %b[q]%b quit' \
           "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$watch_color" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
+      elif [[ "$CURRENT_VIEW" == "argocd" ]]; then
+        printf '%b[s]%b sync  %b[Enter]%b tree  %b[w]%b watch  %b[:]%b view  %b[/]%b filter  %b[n]%b ns  %b[C]%b ctx  %b[R]%b refresh  %b[?]%b help  %b[q]%b quit' \
+          "$k" "$r" "$k" "$r" "$watch_color" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
       elif [[ "$CURRENT_VIEW" == "pods" ]]; then
         printf '%b[l]%b logs  %b[e]%b exec  %b[v]%b prev-logs  %b[t]%b top  %b[f]%b fwd  %b[r]%b restart  %b[D]%b delete  %b[w]%b watch  %b[:]%b view  %b[/]%b filter  %b[n]%b ns  %b[C]%b ctx  %b[R]%b refresh  %b[?]%b help  %b[q]%b quit' \
           "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$C_RED" "$r" "$watch_color" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
@@ -387,22 +397,22 @@ _confirm_quit() {
   TERM_ROWS=$(tput lines 2>/dev/null || echo 40)
   TERM_COLS=$(tput cols  2>/dev/null || echo 120)
 
-  local msg="Quit kube-dash? [y/N]"
-  local row=$(( TERM_ROWS / 2 ))
-  local col=$(( (TERM_COLS - ${#msg}) / 2 ))
-  (( col < 2 )) && col=2
-
-  _at "$row" 1
-  printf '%b%-*s%b' "$BG_BAR" "$TERM_COLS" "" "$C_RESET"
-  _at "$row" "$col"
-  printf '%b%s%b' "$C_YELLOW" "$msg" "$C_RESET"
-  _eol
+  _at "$TERM_ROWS" 1
+  printf '\e[2K'
+  _at "$TERM_ROWS" 2
+  printf '%bQuit y/N : %b' "$C_YELLOW" "$C_RESET"
+  printf '\e[K'
 
   _drain_input
   local key=""
   IFS= read -rsn1 key
   case "$key" in
     y|Y) return 0 ;;
+    $'\x1b')
+      read -rsn2 -t 0.05 _ || true
+      _drain_input
+      return 1
+      ;;
     *)   return 1 ;;
   esac
 }
@@ -577,22 +587,28 @@ _fetch_deploys() {
 _fetch_nodes() {
   mapfile -t DATA_LINES < <(
     kubectl get nodes \
-      --no-headers \
-      -o custom-columns=\
-'NAME:.metadata.name,'\
-'STATUS:.status.conditions[-1].type,'\
-'ROLE:.metadata.labels.node-role\.kubernetes\.io/control-plane,'\
-'VERSION:.status.nodeInfo.kubeletVersion,'\
-'OS:.status.nodeInfo.operatingSystem,'\
-'ARCH:.status.nodeInfo.architecture,'\
-'AGE:.metadata.creationTimestamp' \
+      -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{range .status.conditions[?(@.type=="Ready")]}{.status}{end}{"\t"}{.metadata.labels.node-role\.kubernetes\.io/control-plane}{"\t"}{.metadata.labels.node-role\.kubernetes\.io/master}{"\t"}{.status.nodeInfo.kubeletVersion}{"\t"}{.status.nodeInfo.architecture}{"\t"}{.metadata.creationTimestamp}{"\n"}{end}' \
       2>/dev/null \
-    | awk '{
-        role=$3; if (role=="<none>"||role=="") role="worker"
-        else role="control-plane"
-        printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", $1,$2,role,$4,$5,$6,$7
-      }'
+    | while IFS=$'\t' read -r name status role_cp role_master version arch age; do
+        [[ -z "$name" ]] && continue
+      role="worker"
+        [[ -n "$role_cp" || -n "$role_master" ]] && role="control-plane"
+        [[ -z "$status" ]] && status="Unknown"
+        [[ -z "$version" ]] && version="-"
+        [[ -z "$arch" ]] && arch="-"
+        printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$name" "$status" "$role" "$version" "$arch" "$age"
+      done
   )
+
+  # Convert RFC3339 timestamps to human ages (k9s-like: 45s/12m/3h/5d)
+  local i line name status role version arch age
+  local sep=$'\t'
+  for i in "${!DATA_LINES[@]}"; do
+    line="${DATA_LINES[$i]}"
+    IFS=$'\t' read -r name status role version arch age <<< "$line"
+    age=$(_human_age "$age")
+    DATA_LINES[$i]="${name}${sep}${status}${sep}${role}${sep}${version}${sep}${arch}${sep}${age}"
+  done
 }
 
 _fetch_events() {
@@ -653,43 +669,47 @@ for ev in items[-50:]:
 }
 
 _fetch_argocd() {
-  if command -v python3 &>/dev/null; then
-    mapfile -t DATA_LINES < <(
-      kubectl get applications.argoproj.io -A -o json 2>/dev/null \
-      | python3 -c "
-import json, sys
-data = json.load(sys.stdin)
-for app in data.get('items', []):
-    m   = app.get('metadata', {})
-    sp  = app.get('spec', {})
-    st  = app.get('status', {})
-    ns     = m.get('namespace', '')
-    name   = m.get('name', '')
-    sync   = st.get('sync', {}).get('status', 'Unknown')
-    health = st.get('health', {}).get('status', 'Unknown')
-    src    = sp.get('source') or (sp.get('sources') or [{}])[0]
-    repo   = src.get('repoURL', '')
-    path   = src.get('path', src.get('chart', ''))
-    target = sp.get('destination', {}).get('namespace', '')
-    print('\t'.join([ns, name, sync, health, repo, path, target]))
-" 2>/dev/null \
-      || echo "argocd-ns	not-found	N/A	N/A	N/A	N/A	N/A"
-    )
-  else
-    mapfile -t DATA_LINES < <(
-      kubectl get applications.argoproj.io -A \
-        --no-headers \
-        -o custom-columns=\
+  mapfile -t DATA_LINES < <(
+    kubectl get applications.argoproj.io -A \
+      --no-headers \
+      -o custom-columns=\
 'NAMESPACE:.metadata.namespace,'\
 'NAME:.metadata.name,'\
 'SYNC:.status.sync.status,'\
 'HEALTH:.status.health.status,'\
-'TARGET:.spec.destination.namespace' \
-        2>/dev/null \
-      | awk '{ printf "%s\t%s\t%s\t%s\tN/A\tN/A\t%s\n",$1,$2,$3,$4,$5 }' \
-      || echo "argocd-ns	not-found	N/A	N/A	N/A	N/A	N/A"
-    )
-  fi
+'REV:.status.sync.revision,'\
+'LASTSYNC:.status.operationState.finishedAt,'\
+'RECONCILED:.status.reconciledAt,'\
+'TARGET:.spec.destination.namespace,'\
+'PATH:.spec.source.path,'\
+'CHART:.spec.source.chart' \
+      2>/dev/null \
+    | awk '{
+        ns=$1; name=$2; sync=$3; health=$4; rev=$5; lastsync=$6; reconciled=$7; target=$8; path=$9; chart=$10
+        if (sync=="<none>" || sync=="") sync="Unknown"
+        if (health=="<none>" || health=="") health="Unknown"
+        if (rev=="<none>" || rev=="") rev="-"
+        if (lastsync=="<none>" || lastsync=="") lastsync=reconciled
+        if (lastsync=="<none>" || lastsync=="") lastsync="-"
+        if (target=="<none>" || target=="") target="-"
+        if (path=="<none>" || path=="") path=chart
+        if (path=="<none>" || path=="") path="-"
+        print ns "\t" name "\t" sync "\t" health "\t" rev "\t" lastsync "\t" target "\t" path
+      }' \
+    || echo "argocd-ns	not-found	N/A	N/A	-	-	-	-"
+  )
+
+  local i line ns name sync health rev lastsync target path
+  local sep=$'\t'
+  for i in "${!DATA_LINES[@]}"; do
+    line="${DATA_LINES[$i]}"
+    IFS=$'\t' read -r ns name sync health rev lastsync target path <<< "$line"
+    if [[ "$rev" != "-" && ${#rev} -gt 8 ]]; then
+      rev="${rev:0:8}"
+    fi
+    [[ "$lastsync" != "-" ]] && lastsync=$(_human_age "$lastsync")
+    DATA_LINES[$i]="${ns}${sep}${name}${sep}${sync}${sep}${health}${sep}${rev}${sep}${lastsync}${sep}${target}${sep}${path}"
+  done
 }
 
 _fetch_certs() {
@@ -760,16 +780,39 @@ _fetch_helm() {
   local ns_flag
   [[ "$CURRENT_NS" == "all" ]] && ns_flag="--all-namespaces" || ns_flag="-n $CURRENT_NS"
 
-  # helm list outputs tab-separated: name namespace revision updated status chart app_version
+  # Parse stable JSON keys instead of whitespace-splitting table output.
+  if ! command -v helm &>/dev/null; then
+    DATA_LINES=("N/A\tN/A\tN/A\tN/A\tN/A\tN/A")
+    return
+  fi
+
   mapfile -t DATA_LINES < <(
-    helm list $ns_flag \
-      --output table \
-      --no-headers \
-      2>/dev/null \
-    | awk '{
-        printf "%s\t%s\t%s\t%s\t%s\t%s\n", $1,$2,$3,$5,$6,$7
-      }' \
-    || echo "N/A	N/A	N/A	N/A	N/A	N/A"
+    helm list $ns_flag --output json 2>/dev/null \
+    | tr -d '\n' \
+    | sed -e 's/^\[//' -e 's/\]$//' -e 's/},{/}\n{/g' \
+    | awk '
+      function extract_str(obj, key,   pat, m) {
+        pat = "\"" key "\"[[:space:]]*:[[:space:]]*\"([^\"]*)\""
+        if (match(obj, pat, m)) return m[1]
+        return ""
+      }
+      {
+        if ($0 !~ /\{.*\}/) next
+        name   = extract_str($0, "name")
+        ns     = extract_str($0, "namespace")
+        rev    = extract_str($0, "revision")
+        status = extract_str($0, "status")
+        chart  = extract_str($0, "chart")
+        appver = extract_str($0, "app_version")
+        if (name == "") next
+        if (ns == "") ns = "-"
+        if (rev == "") rev = "-"
+        if (status == "") status = "unknown"
+        if (chart == "") chart = "-"
+        if (appver == "") appver = "-"
+        printf "%s\t%s\t%s\t%s\t%s\t%s\n", name, ns, rev, status, chart, appver
+      }
+    '
   )
 }
 
@@ -777,35 +820,16 @@ _fetch_configmaps() {
   local ns_flag
   [[ "$CURRENT_NS" == "all" ]] && ns_flag="-A" || ns_flag="-n $CURRENT_NS"
 
-  if command -v python3 &>/dev/null; then
-    mapfile -t DATA_LINES < <(
-      kubectl get configmaps $ns_flag -o json 2>/dev/null \
-      | python3 -c "
-import json, sys
-data = json.load(sys.stdin)
-for cm in data.get('items', []):
-    ns   = cm.get('metadata', {}).get('namespace', '')
-    name = cm.get('metadata', {}).get('name', '')
-    keys = len(cm.get('data') or {}) + len(cm.get('binaryData') or {})
-  age  = cm.get('metadata', {}).get('creationTimestamp', '')
-  if not ns or not name:
-    continue
-    print('\t'.join([ns, name, str(keys), age]))
-" 2>/dev/null || true
-    )
-  else
-    # awk fallback — just get name/ns/age, count keys separately
-    mapfile -t DATA_LINES < <(
-      kubectl get configmaps $ns_flag --no-headers \
-        -o custom-columns=\
+  mapfile -t DATA_LINES < <(
+    kubectl get configmaps $ns_flag --no-headers \
+      -o custom-columns=\
 'NAMESPACE:.metadata.namespace,'\
 'NAME:.metadata.name,'\
 'KEYS:.metadata.annotations.kubectl\.kubernetes\.io/last-applied-configuration,'\
 'AGE:.metadata.creationTimestamp' \
-        2>/dev/null \
-      | awk '{printf "%s\t%s\t%s\t%s\n",$1,$2,0,$4}'
-    )
-  fi
+      2>/dev/null \
+    | awk '{printf "%s\t%s\t%s\t%s\n",$1,$2,0,$4}'
+  )
 
   # Normalize rows to: ns\tname\tkeys\tage(human). Drop malformed lines.
   local i line ns name keys age _extra
@@ -1909,13 +1933,14 @@ _render_argocd() {
   local start_row=4
   TERM_COLS=$(tput cols 2>/dev/null || echo 120)
 
-  local w_ns=14 w_name=28 w_sync=12 w_health=12 w_target=16 w_path=20
+  local w_ns=12 w_name=24 w_sync=10 w_health=10 w_rev=8 w_last=8 w_target=14 w_path=18
 
   _at $start_row 1
-  printf '%b%b %-*s %-*s %-*s %-*s %-*s %-*s%b' \
+  printf '%b%b %-*s %-*s %-*s %-*s %-*s %-*s %-*s %-*s%b' \
     "$C_BOLD" "$C_DCYAN" \
     "$w_ns" "NAMESPACE" "$w_name" "APP NAME" \
     "$w_sync" "SYNC" "$w_health" "HEALTH" \
+    "$w_rev" "REV" "$w_last" "LAST" \
     "$w_target" "TARGET NS" "$w_path" "PATH" \
     "$C_RESET"
   _eol
@@ -1939,9 +1964,15 @@ _render_argocd() {
   for (( idx=SCROLL_OFFSET; idx<_end; idx++ )); do
     local line="${filtered[$idx]}"
     (( row > TERM_ROWS - 4 )) && break
-    IFS=$'\t' read -r ns name sync health repo path target <<< "$line"
-    local sc; sc=$(_status_color "$sync")
-    local hc; hc=$(_status_color "$health")
+    IFS=$'\t' read -r ns name sync health rev lastsync target path <<< "$line"
+
+    # Combined status coloring: green when both good, yellow on drift, red on drift+bad health.
+    local cc="$C_GREEN"
+    if [[ "$sync" != "Synced" && "$health" != "Healthy" ]]; then
+      cc="$C_RED"
+    elif [[ "$sync" != "Synced" || "$health" != "Healthy" ]]; then
+      cc="$C_YELLOW"
+    fi
 
     _at "$row" 1
     local _rsel="" _rrst="$C_RESET"
@@ -1951,16 +1982,297 @@ _render_argocd() {
       _rrst="$SEL_RST$BG_SEL"
     fi
 
-    printf ' %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b %-*s %-*s' \
+    printf ' %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b %-*s %-*s' \
       "$C_GRAY"  "$w_ns"     "${ns:0:$w_ns}" \
       "$_rrst" "$C_WHITE"  "$w_name"   "${name:0:$w_name}" \
-      "$_rrst" "$sc"       "$w_sync"   "$sync" \
-      "$_rrst" "$hc"       "$w_health" "$health" \
+      "$_rrst" "$cc"       "$w_sync"   "${sync:0:$w_sync}" \
+      "$_rrst" "$cc"       "$w_health" "${health:0:$w_health}" \
+      "$_rrst" "$C_LGRAY"  "$w_rev"    "${rev:0:$w_rev}" \
+      "$_rrst" "$C_LGRAY"  "$w_last"   "${lastsync:0:$w_last}" \
       "$_rrst" "$w_target" "${target:0:$w_target}" \
                  "$w_path"   "${path:0:$w_path}"
 
     printf '%b' "$_rrst"; _eol; printf '%b' "$C_RESET"
     (( row++ ))
+  done
+
+  _at $(( TERM_ROWS-2 )) 2
+  printf '%b%d apps%b  %bEnter%b tree  %b[s]%b sync selected' \
+    "$C_LGRAY" "${#filtered[@]}" "$C_RESET" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+}
+
+_argocd_sync() {
+  local app="$1" ns="$2"
+  TERM_ROWS=$(tput lines 2>/dev/null || echo 40)
+  TERM_COLS=$(tput cols  2>/dev/null || echo 120)
+
+  _at "$TERM_ROWS" 1
+  printf '%b%-*s%b' "$BG_BAR" "$TERM_COLS" "" "$C_RESET"
+  _at "$TERM_ROWS" 2
+  printf '%bSyncing app %s/%s ...%b' "$C_CYAN" "$ns" "$app" "$C_RESET"
+  _eol
+
+  if kubectl patch applications.argoproj.io "$app" -n "$ns" \
+      --type merge \
+      -p '{"operation":{"sync":{}}}' >/dev/null 2>&1; then
+    _at "$TERM_ROWS" 1
+    printf '%b%-*s%b' "$BG_BAR" "$TERM_COLS" "" "$C_RESET"
+    _at "$TERM_ROWS" 2
+    printf '%bSync started for %s/%s%b' "$C_GREEN" "$ns" "$app" "$C_RESET"
+    _eol
+  else
+    _at "$TERM_ROWS" 1
+    printf '%b%-*s%b' "$BG_BAR" "$TERM_COLS" "" "$C_RESET"
+    _at "$TERM_ROWS" 2
+    printf '%bSync request failed for %s/%s (check RBAC / app permissions)%b' "$C_RED" "$ns" "$app" "$C_RESET"
+    _eol
+  fi
+
+  _drain_input
+  read -rsn1 -t 1 _ || true
+}
+
+_show_argocd_tree() {
+  local app="$1" ns="$2"
+  _argocd_kind_to_resource() {
+    local k="${1,,}"
+    case "$k" in
+      pod|pods) printf 'pod' ;;
+      service|services) printf 'service' ;;
+      deployment|deployments) printf 'deployment' ;;
+      daemonset|daemonsets) printf 'daemonset' ;;
+      statefulset|statefulsets) printf 'statefulset' ;;
+      replicaset|replicasets) printf 'replicaset' ;;
+      job|jobs) printf 'job' ;;
+      cronjob|cronjobs) printf 'cronjob' ;;
+      configmap|configmaps) printf 'configmap' ;;
+      secret|secrets) printf 'secret' ;;
+      ingress|ingresses) printf 'ingress' ;;
+      persistentvolumeclaim|persistentvolumeclaims|pvc|pvcs) printf 'persistentvolumeclaim' ;;
+      serviceaccount|serviceaccounts) printf 'serviceaccount' ;;
+      role|roles) printf 'role' ;;
+      rolebinding|rolebindings) printf 'rolebinding' ;;
+      clusterrole|clusterroles) printf 'clusterrole' ;;
+      clusterrolebinding|clusterrolebindings) printf 'clusterrolebinding' ;;
+      namespace|namespaces) printf 'namespace' ;;
+      node|nodes) printf 'node' ;;
+      horizontalpodautoscaler|horizontalpodautoscalers|hpa) printf 'horizontalpodautoscaler' ;;
+      *) printf '%s' "$k" ;;
+    esac
+  }
+
+  local -a rows=()
+  mapfile -t rows < <(
+    kubectl get applications.argoproj.io "$app" -n "$ns" \
+      -o jsonpath='{range .status.resources[*]}{.kind}{"\t"}{.namespace}{"\t"}{.name}{"\t"}{.status}{"\t"}{.health.status}{"\n"}{end}' 2>/dev/null \
+    | awk -F '\t' '
+        {
+          if ($1=="") next
+          nsp=$2; if (nsp=="" || nsp=="<none>") nsp="-"
+          st=$4; if (st=="" || st=="<none>") st="Unknown"
+          hl=$5; if (hl=="" || hl=="<none>") hl="Unknown"
+          printf "%s\t%s\t%s\t%s\t%s\n", $1, nsp, $3, st, hl
+        }
+      '
+  )
+
+  if (( ${#rows[@]} == 0 )); then
+    _pager_text "argocd tree › ${app}" "Application: ${app}\nNamespace:   ${ns}\n\n(no status.resources yet — app may still be reconciling)"
+    return
+  fi
+
+  local selected=0
+  local offset=0
+
+  _render_argocd_tree_view() {
+    TERM_ROWS=$(tput lines 2>/dev/null || echo 40)
+    TERM_COLS=$(tput cols 2>/dev/null || echo 120)
+
+    local w_kind=14 w_ns=14 w_sync=12 w_health=10
+    local fixed=$(( 1 + w_kind + 1 + w_ns + 1 + 1 + w_sync + 1 + w_health ))
+    local w_name=$(( TERM_COLS - fixed ))
+    (( w_name < 20 )) && w_name=20
+
+    _clear
+    _at 1 1
+    printf '%b%b kube-dash › argocd tree › %s %b' "$BG_HDR" "$C_CYAN" "$app" "$C_RESET"
+    _eol
+
+    _at 2 1
+    printf '%b%b[q]%b back  %b[↑↓/j/k]%b nav  %b[g/G]%b top/bottom  %b[Enter]%b describe  %b[l]%b logs(pod)  %b[f]%b fwd(pod/svc)  %b[s]%b sync app%b' \
+      "$BG_BAR" "$C_CYAN" "$C_RESET$BG_BAR" \
+      "$C_CYAN" "$C_RESET$BG_BAR" \
+      "$C_CYAN" "$C_RESET$BG_BAR" \
+      "$C_CYAN" "$C_RESET$BG_BAR" \
+      "$C_CYAN" "$C_RESET$BG_BAR" \
+      "$C_CYAN" "$C_RESET$BG_BAR" \
+      "$C_CYAN" "$C_RESET$BG_BAR" \
+      "$C_RESET"
+    _eol
+
+    _at 3 1
+    printf '%bApplication:%b %s  %bNamespace:%b %s' "$C_DCYAN" "$C_RESET" "$app" "$C_DCYAN" "$C_RESET" "$ns"
+    _eol
+
+    _hline 4 1 "$TERM_COLS" "-" "$C_GRAY"
+
+    _at 5 1
+    printf '%b%b %-*s %-*s %-*s %-*s %-*s%b' \
+      "$C_BOLD" "$C_DCYAN" \
+      "$w_kind" "KIND" "$w_ns" "NAMESPACE" "$w_name" "NAME" "$w_sync" "SYNC" "$w_health" "HEALTH" \
+      "$C_RESET"
+    _eol
+    _hline 6 1 "$TERM_COLS" "-" "$C_GRAY"
+
+    local top=7
+    local visible=$(( TERM_ROWS - top - 2 ))
+    (( visible < 1 )) && visible=1
+
+    if (( selected < offset )); then
+      offset=$selected
+    elif (( selected >= offset + visible )); then
+      offset=$(( selected - visible + 1 ))
+    fi
+    (( offset < 0 )) && offset=0
+
+    local end=$(( offset + visible ))
+    (( end > ${#rows[@]} )) && end=${#rows[@]}
+
+    local i row kind rns rname rsync rhealth
+    row=$top
+    for (( i=offset; i<end; i++ )); do
+      IFS=$'\t' read -r kind rns rname rsync rhealth <<< "${rows[$i]}"
+      local sc; sc=$(_status_color "$rsync")
+      local hc; hc=$(_status_color "$rhealth")
+
+      _at "$row" 1
+      local _rrst="$C_RESET"
+      if (( i == selected )); then
+        printf '%b' "$BG_SEL"
+        _rrst="$SEL_RST$BG_SEL"
+      fi
+
+      printf ' %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b' \
+        "$C_WHITE" "$w_kind" "${kind:0:$w_kind}" \
+        "$_rrst" "$C_GRAY" "$w_ns" "${rns:0:$w_ns}" \
+        "$_rrst" "$C_WHITE" "$w_name" "${rname:0:$w_name}" \
+        "$_rrst" "$sc" "$w_sync" "${rsync:0:$w_sync}" \
+        "$_rrst" "$hc" "$w_health" "${rhealth:0:$w_health}"
+
+      printf '%b' "$_rrst"
+      _eol
+      printf '%b' "$C_RESET"
+      (( row++ ))
+    done
+
+    _at $(( TERM_ROWS - 1 )) 2
+    printf '%b%d resources%b' "$C_LGRAY" "${#rows[@]}" "$C_RESET"
+    _eol
+  }
+
+  _render_argocd_tree_view
+  _drain_input
+
+  while true; do
+    local key=""
+    IFS= read -rsn1 key
+    case "$key" in
+      q|Q)
+        _clear
+        return
+        ;;
+      j)
+        (( selected < ${#rows[@]} - 1 )) && (( selected++ ))
+        ;;
+      k)
+        (( selected > 0 )) && (( selected-- ))
+        ;;
+      g)
+        selected=0
+        ;;
+      G)
+        selected=$(( ${#rows[@]} - 1 ))
+        ;;
+      $'\x1b')
+        local seq=""
+        read -rsn2 -t 0.15 seq || seq=""
+        _drain_input
+        case "$seq" in
+          "[A") (( selected > 0 )) && (( selected-- )) ;;
+          "[B") (( selected < ${#rows[@]} - 1 )) && (( selected++ )) ;;
+          "") _clear; return ;;
+        esac
+        ;;
+      ''|$'\r'|$'\n')
+        local kind ns_res name_res _sync _health
+        IFS=$'\t' read -r kind ns_res name_res _sync _health <<< "${rows[$selected]}"
+        local res
+        res=$(_argocd_kind_to_resource "$kind")
+        if [[ "$ns_res" == "-" ]]; then
+          if kubectl get "$res" "$name_res" >/dev/null 2>&1; then
+            local out
+            out=$(kubectl describe "$res" "$name_res" 2>&1)
+            _pager_text "describe › ${res}/${name_res}" "$out"
+          else
+            _pager_text "resource not live › ${res}/${name_res}" \
+"Application: ${app}
+Resource:    ${res}/${name_res}
+Scope:       cluster
+
+This resource appears in ArgoCD status but is not currently present live in the cluster.
+Likely causes: app is OutOfSync, pruned resource, or reconcile still in progress.
+
+Tip: press [s] in the tree view to trigger app sync, then refresh and retry Enter."
+          fi
+        else
+          if kubectl get "$res" "$name_res" -n "$ns_res" >/dev/null 2>&1; then
+            _show_detail "$res" "$name_res" "$ns_res"
+          else
+            _pager_text "resource not live › ${res}/${name_res}" \
+"Application: ${app}
+Resource:    ${res}/${name_res}
+Namespace:   ${ns_res}
+
+This resource appears in ArgoCD status but is not currently present live in the cluster.
+Likely causes: app is OutOfSync, pruned resource, or reconcile still in progress.
+
+Tip: press [s] in the tree view to trigger app sync, then refresh and retry Enter."
+          fi
+        fi
+        _clear
+        ;;
+      l|L)
+        local kind ns_res name_res _sync _health
+        IFS=$'\t' read -r kind ns_res name_res _sync _health <<< "${rows[$selected]}"
+        if [[ "${kind,,}" == "pod" ]]; then
+          _show_logs "$name_res" "$ns_res"
+          _clear
+        fi
+        ;;
+      f|F)
+        local kind ns_res name_res _sync _health
+        IFS=$'\t' read -r kind ns_res name_res _sync _health <<< "${rows[$selected]}"
+        local lk
+        lk=$(_argocd_kind_to_resource "$kind")
+        if [[ "$lk" == "pod" || "$lk" == "service" ]]; then
+          _port_forward "$lk" "$name_res" "$ns_res"
+          _clear
+        fi
+        ;;
+      s|S)
+        if $READONLY; then
+          _at $(( TERM_ROWS - 1 )) 2
+          printf '%bread-only mode — sync disabled%b' "$C_YELLOW" "$C_RESET"
+          _eol
+          read -rsn1 -t 1 _ || true
+        else
+          _argocd_sync "$app" "$ns"
+          LAST_REFRESH=0
+          _clear
+        fi
+        ;;
+    esac
+    _render_argocd_tree_view
   done
 }
 
@@ -2779,32 +3091,105 @@ _show_prev_logs() {
 
 # ── Port-forward ───────────────────────────────────────────
 
+_PROMPT_RESULT=""
+
+_prompt_port_input() {
+  local label="$1"
+  local input="" key seq
+  local input_disp
+
+  TERM_ROWS=$(tput lines 2>/dev/null || echo 40)
+  TERM_COLS=$(tput cols  2>/dev/null || echo 120)
+
+  tput cnorm 2>/dev/null
+  while true; do
+    input_disp="${input}_"
+    _at "$TERM_ROWS" 1
+    printf '%b%-*s%b' "$C_RESET" "$TERM_COLS" "" "$C_RESET"
+    _at "$TERM_ROWS" 2
+    printf '%b%b%s%b %b%s%b  %bEnter=ok  Esc/q=cancel%b' \
+      "$C_BOLD" "$C_LGRAY" "$label" "$C_RESET" "$C_REV" "$input_disp" "$C_RESET""$C_RESET" "$C_GRAY" "$C_RESET"
+    printf '\e[K'
+
+    IFS= read -rsn1 key
+    case "$key" in
+      $'\x03') # Ctrl-C
+        _PROMPT_RESULT=""
+        tput civis 2>/dev/null
+        return 1
+        ;;
+      $'\x1b') # Esc (also swallow arrow/function key tails)
+        read -rsn2 -t 0.05 seq || seq=""
+        _drain_input
+        _PROMPT_RESULT=""
+        tput civis 2>/dev/null
+        return 1
+        ;;
+      q|Q)
+        _PROMPT_RESULT=""
+        tput civis 2>/dev/null
+        return 1
+        ;;
+      $'\x7f'|$'\b')
+        [[ -n "$input" ]] && input="${input%?}"
+        ;;
+      $'\r'|$'\n'|'')
+        _PROMPT_RESULT="$input"
+        tput civis 2>/dev/null
+        return 0
+        ;;
+      *)
+        [[ "$key" =~ [[:print:]] ]] && input+="$key"
+        ;;
+    esac
+  done
+}
+
 _port_forward() {
   local resource="$1" name="$2" ns="$3"
 
   TERM_ROWS=$(tput lines 2>/dev/null || echo 40)
-  local mid=$(( TERM_ROWS / 2 ))
+  TERM_COLS=$(tput cols  2>/dev/null || echo 120)
+  local status_row=$(( TERM_ROWS - 1 ))
 
-  # Ask for local and remote ports
-  _at "$mid" 3
-  printf '%bLocal port (e.g. 8080): %b' "$C_YELLOW" "$C_RESET"
-  tput cnorm 2>/dev/null; stty echo 2>/dev/null
-  local local_port; read -r local_port
-  stty -echo 2>/dev/null; tput civis 2>/dev/null
+  # Ask for local and remote ports (Esc/q/Ctrl-C cancels cleanly)
+  local local_port remote_port
+  while true; do
+    _prompt_port_input "Local port (e.g. 8080): " || { _drain_input; return; }
+    local_port="$_PROMPT_RESULT"
+    [[ -z "$local_port" ]] && { _drain_input; return; }
+    if [[ "$local_port" =~ ^[0-9]{1,5}$ ]] && (( local_port >= 1 && local_port <= 65535 )); then
+      break
+    fi
+    _at "$TERM_ROWS" 1
+    printf '%b%-*s%b' "$BG_BAR" "$TERM_COLS" "" "$C_RESET"
+    _at "$TERM_ROWS" 2
+    printf '%bInvalid local port. Use 1-65535. Press any key...%b' "$C_RED" "$C_RESET"
+    _eol
+    _drain_input; read -rsn1; _drain_input
+  done
 
-  [[ -z "$local_port" ]] && { _drain_input; return; }
+  while true; do
+    _prompt_port_input "Remote port (e.g. 8080): " || { _drain_input; return; }
+    remote_port="$_PROMPT_RESULT"
+    [[ -z "$remote_port" ]] && { _drain_input; return; }
+    if [[ "$remote_port" =~ ^[0-9]{1,5}$ ]] && (( remote_port >= 1 && remote_port <= 65535 )); then
+      break
+    fi
+    _at "$TERM_ROWS" 1
+    printf '%b%-*s%b' "$BG_BAR" "$TERM_COLS" "" "$C_RESET"
+    _at "$TERM_ROWS" 2
+    printf '%bInvalid remote port. Use 1-65535. Press any key...%b' "$C_RED" "$C_RESET"
+    _eol
+    _drain_input; read -rsn1; _drain_input
+  done
 
-  _at $(( mid+1 )) 3
-  printf '%bRemote port (e.g. 8080): %b' "$C_YELLOW" "$C_RESET"
-  tput cnorm 2>/dev/null; stty echo 2>/dev/null
-  local remote_port; read -r remote_port
-  stty -echo 2>/dev/null; tput civis 2>/dev/null
-
-  [[ -z "$remote_port" ]] && { _drain_input; return; }
-
-  _at $(( mid+2 )) 3
+  _at "$status_row" 1
+  printf '%b%-*s%b' "$BG_BAR" "$TERM_COLS" "" "$C_RESET"
+  _at "$status_row" 2
   printf '%bStarting port-forward %s:%s -> %s:%s ...%b' \
     "$C_CYAN" "$name" "$remote_port" "localhost" "$local_port" "$C_RESET"
+  _eol
 
   # Run in background, store PID
   kubectl port-forward "$resource/$name" \
@@ -2815,19 +3200,27 @@ _port_forward() {
   local pf_pid=$!
   sleep 0.5
 
+  _at "$status_row" 1
+  printf '%b%-*s%b' "$BG_BAR" "$TERM_COLS" "" "$C_RESET"
+  _at "$status_row" 2
   if kill -0 "$pf_pid" 2>/dev/null; then
-    _at $(( mid+3 )) 3
     printf '%b✓ Port-forward active (PID %d) — localhost:%s -> %s:%s%b' \
       "$C_GREEN" "$pf_pid" "$local_port" "$name" "$remote_port" "$C_RESET"
-    _at $(( mid+4 )) 3
-    printf '%b  Stop with: kill %d%b' "$C_GRAY" "$pf_pid" "$C_RESET"
   else
-    _at $(( mid+3 )) 3
     printf '%b✗ Port-forward failed — check /tmp/kube-dash-pf.log%b' "$C_RED" "$C_RESET"
   fi
+  _eol
 
-  _at $(( mid+6 )) 3
-  printf '%bPress any key to continue...%b' "$C_GRAY" "$C_RESET"
+  _at "$TERM_ROWS" 1
+  printf '%b%-*s%b' "$BG_BAR" "$TERM_COLS" "" "$C_RESET"
+  _at "$TERM_ROWS" 2
+  if kill -0 "$pf_pid" 2>/dev/null; then
+    printf '%bStop with: kill %d%b  %bPress any key to continue...%b' \
+      "$C_GRAY" "$pf_pid" "$C_RESET" "$C_GRAY" "$C_RESET"
+  else
+    printf '%bPress any key to continue...%b' "$C_GRAY" "$C_RESET"
+  fi
+  _eol
   _drain_input; read -rsn1; _drain_input
   LAST_REFRESH=0
 }
@@ -3486,7 +3879,7 @@ _show_help() {
     "## Navigation"
     "0                       Compact All resources view"
     "↑↓ / j k                Move selection up/down"
-    "Enter                   Describe / drill into selected resource"
+    "Enter                   Describe / drill into selected resource (ArgoCD: tree)"
     "Tab                     Next view (cycles all 15)"
     "Shift-Tab               Previous view"
     "n                       Pick namespace"
@@ -3496,7 +3889,7 @@ _show_help() {
     ""
     "## Actions (Pods)"
     "l                       Logs"
-    "L                       Toggle follow logs"
+    "w                       Toggle watch mode (all views)"
     "v                       Previous logs (crashed container)"
     "e                       Exec shell into pod"
     "t                       kubectl top (pods or nodes)"
@@ -3506,6 +3899,7 @@ _show_help() {
     "d                       Describe selected resource"
     ""
     "## Actions (Other views)"
+    "s                       ArgoCD: sync selected app (else: shortcut to Secrets)"
     "f                       Failures-only toggle (All/workloads view)"
     "K                       Cycle workload filter (All view, includes applications)"
     "m                       Toggle include-more non-workloads (All view)"
@@ -3520,7 +3914,7 @@ _show_help() {
     "4                       Events (all namespaces)"
     "5 / a                   ArgoCD Applications"
     "6                       cert-manager Certificates"
-    "7 / s                   Secrets"
+    "7                       Secrets"
     "8                       Services"
     "9                       Helm Releases"
     ""
@@ -4174,7 +4568,7 @@ _main_loop() {
       4)   _switch_view "events"; [[ "$CURRENT_NS" != "all" ]] && CURRENT_NS="all" && LAST_REFRESH=0 ;;
       5|a) _switch_view "argocd"    ;;
       6)   _switch_view "certs"     ;;
-      7|s) _switch_view "secrets"   ;;
+      7)   _switch_view "secrets"   ;;
       8)   _switch_view "services"  ;;
       9|h) _switch_view "helm"      ;;
 
@@ -4288,6 +4682,14 @@ _main_loop() {
             VIEW_LOADED=()
           fi
           _switch_view "pods"
+          continue
+        fi
+
+        # ArgoCD view — Enter opens application resource tree
+        if [[ "$CURRENT_VIEW" == "argocd" ]]; then
+          IFS=$'\t' read -r app_ns app_name _ <<< "$line"
+          _show_argocd_tree "$app_name" "$app_ns"
+          LAST_REFRESH=0
           continue
         fi
 
@@ -4428,6 +4830,23 @@ _main_loop() {
           IFS=$'\t' read -r ns name _ <<< "$line"
           _rolling_restart "deployment" "$name" "$ns"
           LAST_REFRESH=0
+        fi
+        ;;
+
+      # ── ArgoCD sync / secrets shortcut ──────────────────
+      s)
+        if [[ "$CURRENT_VIEW" == "argocd" ]]; then
+          if $READONLY; then
+            _at $(( TERM_ROWS/2 )) $(( TERM_COLS/2 - 18 ))
+            printf '%b  read-only mode — sync disabled  %b' "$C_YELLOW" "$C_RESET"
+            sleep 1; continue
+          fi
+          local line; line=$(_selected_line) || continue
+          IFS=$'\t' read -r app_ns app_name _ <<< "$line"
+          _argocd_sync "$app_name" "$app_ns"
+          LAST_REFRESH=0
+        else
+          _switch_view "secrets"
         fi
         ;;
 
