@@ -17,11 +17,11 @@ spec:
   source:
     repoURL: https://github.com/vinnie-kaboom/argo_cd_demo.git
     targetRevision: HEAD
-    # ArgoCD will find every Application manifest under apps/ and sync them
-    path: apps
+    # ArgoCD will find every Application manifest under argocd/ and sync them
+    path: argocd
     directory:
       recurse: true          # walk subdirectories
-      include: "application*.yaml"  # pick up prod/dev/staging Application manifests
+      include: "*.yaml"  # pick up app and infra Application manifests
 
   destination:
     server: https://kubernetes.default.svc
