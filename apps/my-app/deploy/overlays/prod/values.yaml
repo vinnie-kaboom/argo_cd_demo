@@ -11,8 +11,7 @@ config:
   ENVIRONMENT: prod
 
 secret:
-  DATABASE_URL: postgres://prod-db.internal:5432/my-app-prod
-  API_KEY: prod-key-xxxxx
+  create: false
 
 canary:
   steps:

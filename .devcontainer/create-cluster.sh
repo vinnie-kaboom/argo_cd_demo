@@ -62,12 +62,79 @@ helm upgrade --install argocd argo/argo-cd \
   --wait
 kubectl rollout status deployment/argocd-server -n argocd --timeout=180s
 kubectl rollout status deployment/argocd-repo-server -n argocd --timeout=180s
+kubectl rollout status statefulset/argocd-application-controller -n argocd --timeout=180s || true
 echo "✅ ArgoCD release is healthy"
+
+wait_for_app() {
+  local app_name="$1"
+  local timeout_seconds="${2:-300}"
+  local interval=5
+  local elapsed=0
+
+  echo "⏳ Waiting for Argo CD app '$app_name' to become Synced/Healthy..."
+  while [ "$elapsed" -lt "$timeout_seconds" ]; do
+    local sync_status
+    local health_status
+
+    sync_status=$(kubectl get application "$app_name" -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || true)
+    health_status=$(kubectl get application "$app_name" -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || true)
+
+    if [ "$sync_status" = "Synced" ] && [ "$health_status" = "Healthy" ]; then
+      echo "✅ $app_name is Synced/Healthy"
+      return 0
+    fi
+
+    sleep "$interval"
+    elapsed=$((elapsed + interval))
+  done
+
+  echo "⚠️ Timed out waiting for '$app_name' (continuing)."
+  kubectl get application "$app_name" -n argocd -o wide 2>/dev/null || true
+  return 1
+}
+
+wait_for_secret() {
+  local namespace="$1"
+  local secret_name="$2"
+  local timeout_seconds="${3:-300}"
+  local interval=5
+  local elapsed=0
+
+  echo "⏳ Waiting for secret '$secret_name' in namespace '$namespace'..."
+  while [ "$elapsed" -lt "$timeout_seconds" ]; do
+    if kubectl get secret "$secret_name" -n "$namespace" &>/dev/null; then
+      local db_url
+      local api_key
+      db_url=$(kubectl get secret "$secret_name" -n "$namespace" -o jsonpath='{.data.DATABASE_URL}' 2>/dev/null || true)
+      api_key=$(kubectl get secret "$secret_name" -n "$namespace" -o jsonpath='{.data.API_KEY}' 2>/dev/null || true)
+
+      if [ -n "$db_url" ] && [ -n "$api_key" ]; then
+        echo "✅ Secret '$secret_name' is present in '$namespace' with expected keys"
+        return 0
+      fi
+    fi
+
+    sleep "$interval"
+    elapsed=$((elapsed + interval))
+  done
+
+  echo "⚠️ Timed out waiting for secret '$secret_name' in namespace '$namespace' (continuing)."
+  kubectl get secret "$secret_name" -n "$namespace" 2>/dev/null || true
+  return 1
+}
 
 # ── Bootstrap the app-of-apps tree ──────────────────
 echo "🚀 Applying root App-of-Apps manifest..."
 kubectl apply -f apps/root-app.yaml
-kubectl wait --for=condition=Synced application/root-app -n argocd --timeout=180s || true
+wait_for_app root-app 240 || true
+wait_for_app vault 360 || true
+wait_for_app external-secrets 360 || true
+wait_for_app my-app-dev 420 || true
+wait_for_app my-app-staging 420 || true
+wait_for_app my-app-prod 420
+wait_for_secret my-app-dev my-app-secrets 420 || true
+wait_for_secret my-app-staging my-app-secrets 420 || true
+wait_for_secret my-app my-app-secrets 420
 echo "✅ root-app manifest applied"
 
 # ── Check if Argo Rollouts is already installed ───
@@ -133,4 +200,13 @@ echo ""
 echo " Verify Argo Rollouts:"
 echo "   kubectl get crd rollouts.argoproj.io"
 echo "   kubectl get pods -n argo-rollouts"
+echo ""
+echo " Verify Argo CD + Vault + External Secrets:"
+echo "   kubectl get applications -n argocd"
+echo "   kubectl get pods -n vault"
+echo "   kubectl get pods -n external-secrets"
+echo "   kubectl get externalsecret -A"
+echo "   kubectl get secret my-app-secrets -n my-app-dev"
+echo "   kubectl get secret my-app-secrets -n my-app-staging"
+echo "   kubectl get secret my-app-secrets -n my-app"
 echo "================================================"

@@ -11,8 +11,7 @@ config:
   ENVIRONMENT: staging
 
 secret:
-  DATABASE_URL: postgres://staging-db.internal:5432/my-app-staging
-  API_KEY: staging-key-67890
+  create: false
 
 canary:
   steps:

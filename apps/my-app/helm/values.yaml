@@ -39,8 +39,7 @@ config:
   ENVIRONMENT: prod
 
 secret:
-  DATABASE_URL: ""
-  API_KEY: ""
+  create: false
 
 canary:
   steps:

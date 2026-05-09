@@ -1,0 +1,33 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vault-seed-my-app-dev
+  namespace: my-app-dev
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: vault
+          image: hashicorp/vault:1.17.5
+          env:
+            - name: VAULT_ADDR
+              value: http://vault.vault.svc.cluster.local:8200
+            - name: VAULT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: vault-token
+                  key: token
+          command:
+            - /bin/sh
+            - -ec
+          args:
+            - |
+              until vault status >/dev/null 2>&1; do
+                echo "waiting for vault..."
+                sleep 5
+              done
+              vault kv put secret/my-app/dev DATABASE_URL="postgres://localhost:5432/my-app-dev" API_KEY="dev-key-12345"

@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: vault-token
+  namespace: my-app-dev
+type: Opaque
+stringData:
+  token: root

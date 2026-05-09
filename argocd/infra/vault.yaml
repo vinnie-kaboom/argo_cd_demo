@@ -1,25 +1,33 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: external-secrets
+  name: vault
   namespace: argocd
   annotations:
-    argocd.argoproj.io/sync-wave: "-1"
+    argocd.argoproj.io/sync-wave: "-2"
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
   project: default
   source:
-    repoURL: https://charts.external-secrets.io
-    chart: external-secrets
-    targetRevision: 0.14.0
+    repoURL: https://helm.releases.hashicorp.com
+    chart: vault
+    targetRevision: 0.30.0
     helm:
-      releaseName: external-secrets
+      releaseName: vault
       values: |
-        installCRDs: true
+        server:
+          dev:
+            enabled: true
+          service:
+            type: ClusterIP
+        ui:
+          enabled: true
+        injector:
+          enabled: false
   destination:
     server: https://kubernetes.default.svc
-    namespace: external-secrets
+    namespace: vault
   syncPolicy:
     automated:
       prune: true

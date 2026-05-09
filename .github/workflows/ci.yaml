@@ -2,8 +2,9 @@ name: GitOps – Update my-app Image Tag
 
 # This repo is the GitOps repo. The application source lives in:
 #   https://github.com/vinnie-kaboom/my-app
-# That app repo should build/push the Docker image, then notify this repo with
-# repository_dispatch or a manual workflow_dispatch.
+# The app repo should build/push the Docker image, then notify this repo with
+# repository_dispatch. This workflow then updates the prod Helm values file.
+# Manual workflow_dispatch is kept as a fallback.
 on:
   repository_dispatch:
     types:

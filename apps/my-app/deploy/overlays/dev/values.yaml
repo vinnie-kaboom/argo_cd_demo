@@ -11,8 +11,7 @@ config:
   ENVIRONMENT: dev
 
 secret:
-  DATABASE_URL: postgres://localhost:5432/my-app-dev
-  API_KEY: dev-key-12345
+  create: false
 
 canary:
   steps:
