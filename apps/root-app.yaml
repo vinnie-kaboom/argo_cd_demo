@@ -1,0 +1,35 @@
+---
+# App of Apps – the single root Application you apply once to bootstrap
+# the entire platform. ArgoCD manages itself from this point forward.
+#
+# Apply with:
+#   kubectl apply -f apps/root-app.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root-app
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/vinnie-kaboom/argo_cd_demo.git
+    targetRevision: HEAD
+    # ArgoCD will find every Application manifest under apps/ and sync them
+    path: apps
+    directory:
+      recurse: true          # walk subdirectories
+      include: "application*.yaml"  # pick up prod/dev/staging Application manifests
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

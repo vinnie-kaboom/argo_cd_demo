@@ -1,0 +1,31 @@
+image:
+  repository: vinnie-kaboom/my-app
+  tag: latest
+  pullPolicy: IfNotPresent
+
+replicaCount: 5
+
+config:
+  PORT: "8080"
+  LOG_LEVEL: error
+  ENVIRONMENT: prod
+
+secret:
+  DATABASE_URL: postgres://prod-db.internal:5432/my-app-prod
+  API_KEY: prod-key-xxxxx
+
+canary:
+  steps:
+    - setWeight: 5
+    - pause: {}
+    - setWeight: 25
+    - pause:
+        duration: 3m
+    - setWeight: 50
+    - pause:
+        duration: 5m
+    - setWeight: 100
+
+pdb:
+  enabled: true
+  minAvailable: 2

@@ -1,0 +1,37 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: my-app
+
+resources:
+  - rollout.yaml
+  - services.yaml
+
+# ─── ConfigMap Generator ──────────────────────────────────────────────────
+# Generate a ConfigMap from literal key-value pairs.
+# Access in the Rollout via envFrom: configMapRef.
+configMapGenerator:
+  - name: my-app-config
+    literals:
+      - PORT=8080
+      - LOG_LEVEL=info
+      - ENVIRONMENT=base
+
+# ─── Secret Generator ─────────────────────────────────────────────────────
+# Generate a Secret from literal key-value pairs (base64 encoded by Kubernetes).
+# In production, use external-secrets or sealed-secrets instead of literals.
+secretGenerator:
+  - name: my-app-secrets
+    literals:
+      - DATABASE_URL=# replace in overlays
+      - API_KEY=# replace in overlays
+
+# ─── Common labels applied to all resources ────────────────────────────────
+commonLabels:
+  app: my-app
+  managed-by: kustomize
+
+# ─── Common annotations ────────────────────────────────────────────────────
+commonAnnotations:
+  org: my-org
+  version: "1.0"

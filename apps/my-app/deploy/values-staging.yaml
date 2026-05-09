@@ -1,0 +1,29 @@
+image:
+  repository: vinnie-kaboom/my-app
+  tag: latest
+  pullPolicy: IfNotPresent
+
+replicaCount: 3
+
+config:
+  PORT: "8080"
+  LOG_LEVEL: warn
+  ENVIRONMENT: staging
+
+secret:
+  DATABASE_URL: postgres://staging-db.internal:5432/my-app-staging
+  API_KEY: staging-key-67890
+
+canary:
+  steps:
+    - setWeight: 10
+    - pause: {}
+    - setWeight: 30
+    - pause:
+        duration: 1m
+    - setWeight: 60
+    - pause:
+        duration: 1m
+
+pdb:
+  enabled: false

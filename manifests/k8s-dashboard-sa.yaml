@@ -1,5 +1,0 @@
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: k8s-dashboard-view
-  namespace: k8s-dashboard

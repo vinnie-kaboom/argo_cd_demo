@@ -1,0 +1,25 @@
+image:
+  repository: vinnie-kaboom/my-app
+  tag: latest
+  pullPolicy: IfNotPresent
+
+replicaCount: 2
+
+config:
+  PORT: "8080"
+  LOG_LEVEL: debug
+  ENVIRONMENT: dev
+
+secret:
+  DATABASE_URL: postgres://localhost:5432/my-app-dev
+  API_KEY: dev-key-12345
+
+canary:
+  steps:
+    - setWeight: 50
+    - pause:
+        duration: 30s
+    - setWeight: 100
+
+pdb:
+  enabled: false

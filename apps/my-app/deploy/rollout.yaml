@@ -1,0 +1,104 @@
+---
+# Argo Rollout – manages the canary deployment lifecycle for my-app.
+# ArgoCD syncs this resource; Argo Rollouts controller executes the canary steps.
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: my-app
+  namespace: my-app
+spec:
+  replicas: 5
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: my-app
+
+  template:
+    metadata:
+      labels:
+        app: my-app
+    spec:
+      containers:
+        - name: my-app
+          # image and tag come from values.yaml (updated by CI on every push)
+          image: your-dockerhub-username/my-app:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: APP_COLOR
+              value: blue
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+
+  strategy:
+    canary:
+      stableService: my-app-stable    # points at current stable pods
+      canaryService: my-app-canary    # points at canary pods during rollout
+
+      # ── Traffic routing (optional) ────────────────────────────────────────
+      # Uncomment the block matching your ingress controller to get precise
+      # weight-based splitting instead of pod-count-based splitting.
+      #
+      # NGINX:
+      # trafficRouting:
+      #   nginx:
+      #     stableIngress: my-app-ingress
+      #
+      # Istio:
+      # trafficRouting:
+      #   istio:
+      #     virtualServices:
+      #       - name: my-app-vs
+      #         routes:
+      #           - primary
+
+      steps:
+        # ── Step 1: send 10% of traffic to the new build ──────────────────
+        - setWeight: 10
+
+        # ── Step 2: MANUAL GATE ───────────────────────────────────────────
+        # Pipeline pauses here. A human inspects canary metrics/logs then:
+        #   promote:  kubectl argo rollouts promote my-app -n my-app
+        #   rollback: kubectl argo rollouts abort   my-app -n my-app
+        - pause: {}
+
+        # ── Step 3: ramp to 30%, bake for 2 minutes ───────────────────────
+        - setWeight: 30
+        - pause:
+            duration: 2m
+
+        # ── Step 4: ramp to 60%, bake for 2 minutes ───────────────────────
+        - setWeight: 60
+        - pause:
+            duration: 2m
+
+        # ── Step 5: 100% – full promotion ─────────────────────────────────
+        # (Argo Rollouts promotes automatically after the last step completes)
+
+      # ── Automated analysis (uncomment after creating an AnalysisTemplate) ─
+      # analysis:
+      #   templates:
+      #     - templateName: my-app-success-rate
+      #   startingStep: 2   # begin analysis after the manual gate
+      #   args:
+      #     - name: service-name
+      #       value: my-app-canary

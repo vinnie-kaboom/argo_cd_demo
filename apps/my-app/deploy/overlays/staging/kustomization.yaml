@@ -1,0 +1,61 @@
+# Staging overlay – realistic conditions
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../base
+
+namespace: my-app-staging
+
+# ─── Patch replicas for staging (moderate) ────────────────────────────────
+patchesStrategicMerge:
+  - |-
+    apiVersion: argoproj.io/v1alpha1
+    kind: Rollout
+    metadata:
+      name: my-app
+    spec:
+      replicas: 3
+
+# ─── Patch canary steps for staging (balanced bake time) ──────────────────
+  - |-
+    apiVersion: argoproj.io/v1alpha1
+    kind: Rollout
+    metadata:
+      name: my-app
+    spec:
+      strategy:
+        canary:
+          steps:
+            - setWeight: 10
+            - pause: {}
+            - setWeight: 30
+            - pause:
+                duration: 1m      # moderate bake in staging
+            - setWeight: 60
+            - pause:
+                duration: 1m
+
+# ─── Override ConfigMap for staging ───────────────────────────────────────
+configMapGenerator:
+  - name: my-app-config
+    behavior: merge
+    literals:
+      - ENVIRONMENT=staging
+      - LOG_LEVEL=warn              # normal logging in staging
+
+# ─── Override Secret for staging ──────────────────────────────────────────
+secretGenerator:
+  - name: my-app-secrets
+    behavior: merge
+    literals:
+      - DATABASE_URL=postgres://staging-db.internal:5432/my-app-staging
+      - API_KEY=staging-key-67890
+
+# ─── Labels specific to staging ───────────────────────────────────────────
+commonLabels:
+  environment: staging
+
+# ─── Annotations specific to staging ──────────────────────────────────────
+commonAnnotations:
+  deployment-environment: staging

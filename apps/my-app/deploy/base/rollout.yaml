@@ -1,0 +1,66 @@
+---
+# Argo Rollout – moved to base/ for reuse across overlays
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: my-app
+  namespace: my-app
+spec:
+  replicas: 5
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: my-app
+
+  template:
+    metadata:
+      labels:
+        app: my-app
+    spec:
+      containers:
+        - name: my-app
+          image: your-dockerhub-username/my-app:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          # Load configuration from ConfigMap generator
+          envFrom:
+            - configMapRef:
+                name: my-app-config
+            - secretRef:
+                name: my-app-secrets
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+
+  strategy:
+    canary:
+      stableService: my-app-stable
+      canaryService: my-app-canary
+
+      steps:
+        - setWeight: 10
+        - pause: {}
+        - setWeight: 30
+        - pause:
+            duration: 2m
+        - setWeight: 60
+        - pause:
+            duration: 2m

@@ -1,0 +1,76 @@
+# Development overlay – fast iteration
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../base
+
+namespace: my-app-dev
+
+# ─── Patch replicas for dev (fewer instances) ──────────────────────────────
+patchesStrategicMerge:
+  - |-
+    apiVersion: argoproj.io/v1alpha1
+    kind: Rollout
+    metadata:
+      name: my-app
+    spec:
+      replicas: 2    # fewer replicas in dev
+
+# ─── Patch container resources for dev ─────────────────────────────────────
+  - |-
+    apiVersion: argoproj.io/v1alpha1
+    kind: Rollout
+    metadata:
+      name: my-app
+    spec:
+      template:
+        spec:
+          containers:
+            - name: my-app
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  cpu: 100m
+                  memory: 96Mi
+
+# ─── Patch canary steps for dev (faster promotion) ────────────────────────
+  - |-
+    apiVersion: argoproj.io/v1alpha1
+    kind: Rollout
+    metadata:
+      name: my-app
+    spec:
+      strategy:
+        canary:
+          steps:
+            - setWeight: 50
+            - pause:
+                duration: 30s    # fast bake in dev
+            - setWeight: 100
+
+# ─── Override ConfigMap for dev environment ────────────────────────────────
+configMapGenerator:
+  - name: my-app-config
+    behavior: merge
+    literals:
+      - ENVIRONMENT=dev
+      - LOG_LEVEL=debug             # verbose logging in dev
+
+# ─── Override Secret for dev environment ──────────────────────────────────
+secretGenerator:
+  - name: my-app-secrets
+    behavior: merge
+    literals:
+      - DATABASE_URL=postgres://localhost:5432/my-app-dev
+      - API_KEY=dev-key-12345
+
+# ─── Labels specific to dev ────────────────────────────────────────────────
+commonLabels:
+  environment: dev
+
+# ─── Annotations specific to dev ──────────────────────────────────────────
+commonAnnotations:
+  deployment-environment: development

@@ -1,0 +1,33 @@
+---
+# Services – moved to base/ for reuse across overlays
+apiVersion: v1
+kind: Service
+metadata:
+  name: my-app-stable
+  namespace: my-app
+  labels:
+    app: my-app
+spec:
+  selector:
+    app: my-app
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: my-app-canary
+  namespace: my-app
+  labels:
+    app: my-app
+spec:
+  selector:
+    app: my-app
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+  type: ClusterIP

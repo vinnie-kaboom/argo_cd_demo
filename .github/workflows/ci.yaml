@@ -1,0 +1,64 @@
+name: GitOps – Update my-app Image Tag
+
+# This repo is the GitOps repo. The application source lives in:
+#   https://github.com/vinnie-kaboom/my-app
+# That app repo should build/push the Docker image, then notify this repo with
+# repository_dispatch or a manual workflow_dispatch.
+on:
+  repository_dispatch:
+    types:
+      - my-app-image-published
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Docker image tag to promote in GitOps"
+        required: true
+        type: string
+
+env:
+  VALUES_FILE: apps/my-app/deploy/values-prod.yaml
+
+jobs:
+  update-image-tag:
+    name: Update image tag in git
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve requested image tag
+        id: vars
+        env:
+          DISPATCH_TAG: ${{ github.event.client_payload.image_tag }}
+          INPUT_TAG: ${{ inputs.image_tag }}
+        run: |
+          TAG="${DISPATCH_TAG:-$INPUT_TAG}"
+          if [[ -z "$TAG" ]]; then
+            echo "image_tag is required via repository_dispatch.client_payload.image_tag or workflow_dispatch input"
+            exit 1
+          fi
+          echo "image_tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Update production image tag
+        env:
+          NEW_TAG: ${{ steps.vars.outputs.image_tag }}
+          VALUES_FILE: ${{ env.VALUES_FILE }}
+        run: |
+          sed -i "s|^  tag:.*|  tag: \"${NEW_TAG}\"|" "${VALUES_FILE}"
+          echo "Updated ${VALUES_FILE} → tag: ${NEW_TAG}"
+
+      - name: Commit and push
+        env:
+          NEW_TAG: ${{ steps.vars.outputs.image_tag }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "${VALUES_FILE}"
+          git diff --cached --quiet && echo "No changes to commit" && exit 0
+          git commit -m "gitops: promote my-app image to ${NEW_TAG} [skip ci]"
+          git push

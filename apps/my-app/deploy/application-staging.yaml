@@ -1,0 +1,33 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: my-app-staging
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+
+spec:
+  project: default
+
+  sources:
+    - repoURL: https://github.com/vinnie-kaboom/my-app.git
+      targetRevision: HEAD
+      path: chart
+      helm:
+        valueFiles:
+          - $values/apps/my-app/deploy/values-staging.yaml
+    - repoURL: https://github.com/vinnie-kaboom/argo_cd_demo.git
+      targetRevision: HEAD
+      ref: values
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: my-app-staging
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
