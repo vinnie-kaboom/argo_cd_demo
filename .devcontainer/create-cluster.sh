@@ -64,6 +64,12 @@ kubectl rollout status deployment/argocd-server -n argocd --timeout=180s
 kubectl rollout status deployment/argocd-repo-server -n argocd --timeout=180s
 echo "✅ ArgoCD release is healthy"
 
+# ── Bootstrap the app-of-apps tree ──────────────────
+echo "🚀 Applying root App-of-Apps manifest..."
+kubectl apply -f apps/root-app.yaml
+kubectl wait --for=condition=Synced application/root-app -n argocd --timeout=180s || true
+echo "✅ root-app manifest applied"
+
 # ── Check if Argo Rollouts is already installed ───
 if kubectl get crd rollouts.argoproj.io &>/dev/null && \
    kubectl get pods -n argo-rollouts &>/dev/null; then
