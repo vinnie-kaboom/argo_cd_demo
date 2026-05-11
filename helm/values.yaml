@@ -1,0 +1,57 @@
+nameOverride: ""
+fullnameOverride: ""
+
+labels: {}
+annotations: {}
+
+image:
+  repository: vinnie-kaboom/my-app
+  tag: latest
+  pullPolicy: IfNotPresent
+
+replicaCount: 5
+
+containerPort: 8080
+
+service:
+  stable:
+    name: my-app-stable
+    port: 80
+    targetPort: http
+    type: ClusterIP
+  canary:
+    name: my-app-canary
+    port: 80
+    targetPort: http
+    type: ClusterIP
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi
+
+config:
+  PORT: "8080"
+  LOG_LEVEL: info
+  ENVIRONMENT: prod
+
+secret:
+  create: false
+
+canary:
+  steps:
+    - setWeight: 10
+    - pause: {}
+    - setWeight: 30
+    - pause:
+        duration: 2m
+    - setWeight: 60
+    - pause:
+        duration: 2m
+
+pdb:
+  enabled: false
+  minAvailable: 2

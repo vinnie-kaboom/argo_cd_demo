@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.service.stable.name }}
+  labels:
+    {{- include "my-app.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: {{ include "my-app.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: {{ .Values.service.stable.port }}
+      targetPort: {{ .Values.service.stable.targetPort }}
+  type: {{ .Values.service.stable.type }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.service.canary.name }}
+  labels:
+    {{- include "my-app.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: {{ include "my-app.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: {{ .Values.service.canary.port }}
+      targetPort: {{ .Values.service.canary.targetPort }}
+  type: {{ .Values.service.canary.type }}
