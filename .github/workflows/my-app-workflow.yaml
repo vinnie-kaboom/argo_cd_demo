@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - src/**
+      - helm/**
       - Dockerfile
       - .github/workflows/**
   workflow_dispatch:

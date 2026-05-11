@@ -3,15 +3,21 @@ FROM python:3.12-slim AS base
 
 WORKDIR /app
 
-# Install trivy for scanning
+# Install trivy and helm via apt/official repos
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
-    && curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin \
+    wget \
+    apt-transport-https \
+    gnupg \
+    && wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | gpg --dearmor -o /usr/share/keyrings/trivy.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb generic main" \
+       > /etc/apt/sources.list.d/trivy.list \
+    && curl https://baltocdn.com/helm/signing.asc | gpg --dearmor -o /usr/share/keyrings/helm.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/helm.gpg] https://baltocdn.com/helm/stable/debian/ all main" \
+       > /etc/apt/sources.list.d/helm-stable-debian.list \
+    && apt-get update && apt-get install -y --no-install-recommends trivy helm \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
-
-# Install helm for chart linting/scanning
-RUN curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 
 # Copy source and helm chart for scanning
 COPY src/ ./src/
