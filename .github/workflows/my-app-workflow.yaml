@@ -37,21 +37,6 @@ jobs:
           username: vinnie-kaboom
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Verify DockerHub authenticated user
-        run: |
-          set -euo pipefail
-          AUTH_USER=$(docker info --format '{{.Username}}')
-          if [[ -z "${AUTH_USER}" ]]; then
-            echo "Docker authentication succeeded but no Docker Hub username is available."
-            exit 1
-          fi
-          if [[ "${AUTH_USER}" != "vinnie-kaboom" ]]; then
-            echo "Authenticated as '${AUTH_USER}', expected 'vinnie-kaboom'."
-            echo "Use a Docker Hub PAT created under the vinnie-kaboom account with Read & Write permissions."
-            exit 1
-          fi
-          echo "Docker Hub authenticated user verified: ${AUTH_USER}"
-
       - name: Preflight DockerHub push permissions
         run: |
           set -euo pipefail
@@ -93,11 +78,62 @@ jobs:
         run: |
           docker buildx imagetools inspect "${IMAGE_NAME}:${{ steps.meta.outputs.version }}"
 
+      - name: Preflight GitHub dispatch token access
+        run: |
+          set -euo pipefail
+          API_URL="https://api.github.com/repos/${DISPATCH_REPO}"
+          STATUS=$(curl -sS -o /tmp/gh_repo_check.json -w "%{http_code}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.GH_DISPATCH_TOKEN }}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "$API_URL")
+
+          if [[ "$STATUS" == "200" ]]; then
+            echo "GitHub token can access ${DISPATCH_REPO}."
+            exit 0
+          fi
+
+          echo "GitHub token preflight failed with HTTP ${STATUS}."
+          if [[ "$STATUS" == "401" ]]; then
+            echo "GH_DISPATCH_TOKEN is invalid or expired."
+          elif [[ "$STATUS" == "403" ]]; then
+            echo "GH_DISPATCH_TOKEN lacks required repository permissions."
+            echo "Use a PAT with repo/public_repo (classic) or Contents: Read & Write (fine-grained) on ${DISPATCH_REPO}."
+          elif [[ "$STATUS" == "404" ]]; then
+            echo "Repository ${DISPATCH_REPO} is not visible to this token (or does not exist)."
+          fi
+          cat /tmp/gh_repo_check.json
+          exit 1
+
       - name: Dispatch image tag to GitOps repo
-        uses: peter-evans/repository-dispatch@v3
-        with:
-          token: ${{ secrets.GH_DISPATCH_TOKEN }}
-          repository: ${{ env.DISPATCH_REPO }}
-          event-type: my-app-image-published
-          client-payload: |
-            {"image_tag":"${{ steps.meta.outputs.version }}"}
+        run: |
+          set -euo pipefail
+          API_URL="https://api.github.com/repos/${DISPATCH_REPO}/dispatches"
+          PAYLOAD=$(cat <<'JSON'
+          {"event_type":"my-app-image-published","client_payload":{"image_tag":"${{ steps.meta.outputs.version }}"}}
+          JSON
+          )
+
+          STATUS=$(curl -sS -o /tmp/gh_dispatch.json -w "%{http_code}" \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.GH_DISPATCH_TOKEN }}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "$API_URL" \
+            -d "$PAYLOAD")
+
+          if [[ "$STATUS" == "204" ]]; then
+            echo "Repository dispatch sent successfully for image tag ${{ steps.meta.outputs.version }}."
+            exit 0
+          fi
+
+          echo "Repository dispatch failed with HTTP ${STATUS}."
+          if [[ "$STATUS" == "401" ]]; then
+            echo "GH_DISPATCH_TOKEN is invalid or expired."
+          elif [[ "$STATUS" == "403" ]]; then
+            echo "GH_DISPATCH_TOKEN cannot create repository dispatch events for ${DISPATCH_REPO}."
+          elif [[ "$STATUS" == "404" ]]; then
+            echo "Repository ${DISPATCH_REPO} is not visible to this token (or does not exist)."
+          fi
+          cat /tmp/gh_dispatch.json
+          exit 1
