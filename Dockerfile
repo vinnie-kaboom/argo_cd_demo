@@ -3,20 +3,26 @@ FROM python:3.12-slim AS base
 
 WORKDIR /app
 
-# Install trivy and helm via apt/official repos
+# Install trivy from its apt repo and helm from official release tarball.
+# This avoids intermittent DNS failures to baltocdn.com in GitHub Actions.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
     wget \
+    tar \
+    gzip \
     apt-transport-https \
     gnupg \
     && wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | gpg --dearmor -o /usr/share/keyrings/trivy.gpg \
     && echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb generic main" \
        > /etc/apt/sources.list.d/trivy.list \
-    && curl https://baltocdn.com/helm/signing.asc | gpg --dearmor -o /usr/share/keyrings/helm.gpg \
-    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/helm.gpg] https://baltocdn.com/helm/stable/debian/ all main" \
-       > /etc/apt/sources.list.d/helm-stable-debian.list \
-    && apt-get update && apt-get install -y --no-install-recommends trivy helm \
+    && apt-get update && apt-get install -y --no-install-recommends trivy \
+    && HELM_VERSION="v3.16.4" \
+    && curl -fsSL --retry 5 --retry-delay 2 --retry-connrefused "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" -o /tmp/helm.tgz \
+    && tar -xzf /tmp/helm.tgz -C /tmp \
+    && mv /tmp/linux-amd64/helm /usr/local/bin/helm \
+    && chmod +x /usr/local/bin/helm \
+    && rm -rf /tmp/helm.tgz /tmp/linux-amd64 \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Copy source and helm chart for scanning
@@ -30,7 +36,7 @@ RUN trivy fs --exit-code 1 --severity HIGH,CRITICAL --no-progress ./src || true
 RUN helm lint ./helm
 
 # Scan helm chart (config/misconfig scan)
-RUN trivy config --exit-code 1 --severity HIGH,CRITICAL --no-progress ./helm || true
+RUN trivy config --exit-code 1 --severity HIGH,CRITICAL ./helm || true
 
 # ---- runtime stage ----
 FROM python:3.12-slim

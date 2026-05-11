@@ -16,7 +16,7 @@ jobs:
     permissions:
       contents: read
     env:
-      IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/my-app
+      IMAGE_NAME: vinnie-kaboom/my-app
       DISPATCH_REPO: vinnie-kaboom/argo_cd_demo
 
     steps:
@@ -25,7 +25,6 @@ jobs:
 
       - name: Validate required secrets
         run: |
-          [[ -n "${{ secrets.DOCKERHUB_USERNAME }}" ]] || { echo "Missing DOCKERHUB_USERNAME"; exit 1; }
           [[ -n "${{ secrets.DOCKERHUB_TOKEN }}" ]] || { echo "Missing DOCKERHUB_TOKEN"; exit 1; }
           [[ -n "${{ secrets.GH_DISPATCH_TOKEN }}" ]] || { echo "Missing GH_DISPATCH_TOKEN"; exit 1; }
 
@@ -35,8 +34,34 @@ jobs:
       - name: Log in to DockerHub
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          username: vinnie-kaboom
           password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Verify DockerHub authenticated user
+        run: |
+          set -euo pipefail
+          AUTH_USER=$(docker info --format '{{.Username}}')
+          if [[ -z "${AUTH_USER}" ]]; then
+            echo "Docker authentication succeeded but no Docker Hub username is available."
+            exit 1
+          fi
+          if [[ "${AUTH_USER}" != "vinnie-kaboom" ]]; then
+            echo "Authenticated as '${AUTH_USER}', expected 'vinnie-kaboom'."
+            echo "Use a Docker Hub PAT created under the vinnie-kaboom account with Read & Write permissions."
+            exit 1
+          fi
+          echo "Docker Hub authenticated user verified: ${AUTH_USER}"
+
+      - name: Preflight DockerHub push permissions
+        run: |
+          set -euo pipefail
+          CHECK_TAG="push-check-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          echo "Checking push permissions for ${IMAGE_NAME}:${CHECK_TAG}"
+          if ! printf 'FROM scratch\nLABEL purpose="push-permission-check"\n' | docker buildx build --platform linux/amd64 --push -t "${IMAGE_NAME}:${CHECK_TAG}" -; then
+            echo "Docker Hub push preflight failed."
+            echo "Verify DOCKERHUB_TOKEN is a PAT from vinnie-kaboom with Read & Write permissions and can push to ${IMAGE_NAME}."
+            exit 1
+          fi
 
       - name: Generate metadata
         id: meta
