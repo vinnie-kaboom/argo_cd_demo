@@ -21,6 +21,10 @@ spec:
         app.kubernetes.io/name: {{ include "my-app.name" . }}
         app.kubernetes.io/instance: {{ .Release.Name }}
     spec:
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: {{ include "my-app.name" . }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"

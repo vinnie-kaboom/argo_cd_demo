@@ -2,6 +2,7 @@ image:
   repository: vinnie-kaboom/my-app
   tag: latest
   pullPolicy: IfNotPresent
+  pullSecrets: []
 
 replicaCount: 5
 
