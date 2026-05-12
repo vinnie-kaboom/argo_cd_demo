@@ -4,6 +4,28 @@ set -e
 CLUSTER_NAME=${1:-"argocd-demo"}
 ARGOCD_CHART_VERSION="7.8.3"
 
+ensure_k8s_connectivity() {
+  local retries=6
+  local wait_seconds=5
+
+  if ! docker info >/dev/null 2>&1; then
+    echo "❌ Docker daemon is not reachable. In Codespaces, restart/rebuild the container and rerun this script."
+    exit 1
+  fi
+
+  kind export kubeconfig --name "$CLUSTER_NAME" >/dev/null 2>&1 || true
+
+  for ((i=1; i<=retries; i++)); do
+    if kubectl cluster-info >/dev/null 2>&1; then
+      return 0
+    fi
+    echo "⏳ Waiting for Kubernetes API (${i}/${retries})..."
+    sleep "$wait_seconds"
+  done
+
+  return 1
+}
+
 echo "================================================"
 echo " Setting up cluster: $CLUSTER_NAME"
 echo "================================================"
@@ -15,6 +37,16 @@ else
   echo "🚀 Creating kind cluster (2 control-plane + 2 workers)..."
   kind create cluster --name $CLUSTER_NAME --config .devcontainer/4-node-cluster.yaml
   echo "✅ Cluster '$CLUSTER_NAME' created"
+fi
+
+if ! ensure_k8s_connectivity; then
+  echo "⚠️ Cluster exists but API server is unreachable. Recreating cluster '$CLUSTER_NAME'..."
+  kind delete cluster --name "$CLUSTER_NAME" || true
+  kind create cluster --name "$CLUSTER_NAME" --config .devcontainer/4-node-cluster.yaml
+  if ! ensure_k8s_connectivity; then
+    echo "❌ Kubernetes API is still unreachable after cluster recreation."
+    exit 1
+  fi
 fi
 
 echo ""
