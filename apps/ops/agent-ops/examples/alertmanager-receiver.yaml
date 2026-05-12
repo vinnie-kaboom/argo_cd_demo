@@ -1,0 +1,17 @@
+route:
+  receiver: aiops-agent
+
+receivers:
+  - name: aiops-agent
+    webhook_configs:
+      - url: http://agent-webhook-eventsource-svc.agent-ops-dev.svc.cluster.local:12000/agent/alerts
+        send_resolved: true
+
+# Example alert labels/annotations that the sensor maps into workflow parameters:
+# labels:
+#   app: my-app-dev
+#   namespace: my-app-dev
+#   environment: dev
+#   aiops_action: refresh-app
+# annotations:
+#   summary: Canary error rate exceeded threshold

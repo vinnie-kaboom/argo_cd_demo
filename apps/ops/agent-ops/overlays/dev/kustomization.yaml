@@ -25,3 +25,13 @@ patches:
       - op: replace
         path: /spec/arguments/parameters/5/value
         value: dev
+      - op: replace
+        path: /spec/arguments/parameters/7/value
+        value: "true"
+  - target:
+      kind: Sensor
+      name: agent-remediation-sensor
+    patch: |-
+      - op: replace
+        path: /spec/triggers/0/template/argoWorkflow/source/resource/spec/arguments/parameters/7/value
+        value: "true"

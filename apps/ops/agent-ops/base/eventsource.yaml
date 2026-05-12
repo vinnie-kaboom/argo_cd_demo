@@ -12,3 +12,7 @@ spec:
       endpoint: /agent/remediate
       method: POST
       port: "12000"
+    alertmanager:
+      endpoint: /agent/alerts
+      method: POST
+      port: "12000"

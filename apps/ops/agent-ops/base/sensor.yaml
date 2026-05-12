@@ -9,6 +9,9 @@ spec:
     - name: remediation-dep
       eventSourceName: agent-webhook
       eventName: remediation
+    - name: alertmanager-dep
+      eventSourceName: agent-webhook
+      eventName: alertmanager
   triggers:
     - template:
         name: run-agent-remediation
@@ -37,6 +40,10 @@ spec:
                       value: ""
                     - name: environment
                       value: default
+                    - name: proposedReplicaCount
+                      value: ""
+                    - name: allowPullRequests
+                      value: "false"
           parameters:
             - src:
                 dependencyName: remediation-dep
@@ -58,3 +65,71 @@ spec:
                 dependencyName: remediation-dep
                 dataKey: body.rolloutName
               dest: spec.arguments.parameters.4.value
+            - src:
+                dependencyName: remediation-dep
+                dataKey: body.environment
+              dest: spec.arguments.parameters.5.value
+            - src:
+                dependencyName: remediation-dep
+                dataKey: body.proposedReplicaCount
+              dest: spec.arguments.parameters.6.value
+    - template:
+        name: run-alertmanager-remediation
+        argoWorkflow:
+          operation: submit
+          source:
+            resource:
+              apiVersion: argoproj.io/v1alpha1
+              kind: Workflow
+              metadata:
+                generateName: agent-alert-
+              spec:
+                workflowTemplateRef:
+                  name: agent-remediation
+                arguments:
+                  parameters:
+                    - name: action
+                      value: record-only
+                    - name: summary
+                      value: alertmanager event
+                    - name: appName
+                      value: my-app-dev
+                    - name: appNamespace
+                      value: my-app-dev
+                    - name: rolloutName
+                      value: ""
+                    - name: environment
+                      value: dev
+                    - name: proposedReplicaCount
+                      value: ""
+                    - name: allowPullRequests
+                      value: "false"
+          parameters:
+            - src:
+                dependencyName: alertmanager-dep
+                dataKey: body.commonLabels.aiops_action
+              dest: spec.arguments.parameters.0.value
+            - src:
+                dependencyName: alertmanager-dep
+                dataKey: body.commonAnnotations.summary
+              dest: spec.arguments.parameters.1.value
+            - src:
+                dependencyName: alertmanager-dep
+                dataKey: body.commonLabels.app
+              dest: spec.arguments.parameters.2.value
+            - src:
+                dependencyName: alertmanager-dep
+                dataKey: body.commonLabels.namespace
+              dest: spec.arguments.parameters.3.value
+            - src:
+                dependencyName: alertmanager-dep
+                dataKey: body.commonLabels.rollout
+              dest: spec.arguments.parameters.4.value
+            - src:
+                dependencyName: alertmanager-dep
+                dataKey: body.commonLabels.environment
+              dest: spec.arguments.parameters.5.value
+            - src:
+                dependencyName: alertmanager-dep
+                dataKey: body.commonLabels.proposedReplicaCount
+              dest: spec.arguments.parameters.6.value

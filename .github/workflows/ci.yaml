@@ -17,7 +17,7 @@ on:
         type: string
 
 env:
-  VALUES_FILE: apps/my-app/deploy/overlays/prod/values.yaml
+  VALUES_FILE: apps/app/my-app/deploy/overlays/prod/values.yaml
 
 jobs:
   update-image-tag:

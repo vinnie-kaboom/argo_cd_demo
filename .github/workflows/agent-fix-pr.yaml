@@ -1,0 +1,122 @@
+name: AIOps - Propose GitOps Fix
+
+on:
+  repository_dispatch:
+    types:
+      - agent-open-fix-pr
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+      proposed_replica_count:
+        description: Proposed replica count
+        required: true
+        type: string
+      summary:
+        description: Why the fix is being proposed
+        required: true
+        type: string
+
+jobs:
+  propose-fix:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve request payload
+        id: vars
+        env:
+          DISPATCH_ENV: ${{ github.event.client_payload.environment }}
+          INPUT_ENV: ${{ inputs.environment }}
+          DISPATCH_REPLICAS: ${{ github.event.client_payload.proposed_replica_count }}
+          INPUT_REPLICAS: ${{ inputs.proposed_replica_count }}
+          DISPATCH_SUMMARY: ${{ github.event.client_payload.summary }}
+          INPUT_SUMMARY: ${{ inputs.summary }}
+        run: |
+          set -euo pipefail
+          ENVIRONMENT="${DISPATCH_ENV:-$INPUT_ENV}"
+          PROPOSED_REPLICA_COUNT="${DISPATCH_REPLICAS:-$INPUT_REPLICAS}"
+          SUMMARY="${DISPATCH_SUMMARY:-$INPUT_SUMMARY}"
+
+          case "$ENVIRONMENT" in
+            dev|staging|prod) ;;
+            *)
+              echo "Unsupported environment: $ENVIRONMENT" >&2
+              exit 1
+              ;;
+          esac
+
+          if ! [[ "$PROPOSED_REPLICA_COUNT" =~ ^[0-9]+$ ]]; then
+            echo "Replica count must be a non-negative integer" >&2
+            exit 1
+          fi
+
+          VALUES_FILE="apps/app/my-app/deploy/overlays/${ENVIRONMENT}/values.yaml"
+
+          echo "environment=$ENVIRONMENT" >> "$GITHUB_OUTPUT"
+          echo "proposed_replica_count=$PROPOSED_REPLICA_COUNT" >> "$GITHUB_OUTPUT"
+          echo "summary=$SUMMARY" >> "$GITHUB_OUTPUT"
+          echo "values_file=$VALUES_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Update overlay values
+        env:
+          VALUES_FILE: ${{ steps.vars.outputs.values_file }}
+          PROPOSED_REPLICA_COUNT: ${{ steps.vars.outputs.proposed_replica_count }}
+        run: |
+          set -euo pipefail
+          sed -i "s|^replicaCount:.*|replicaCount: ${PROPOSED_REPLICA_COUNT}|" "$VALUES_FILE"
+          git diff -- "$VALUES_FILE"
+
+      - name: Create pull request
+        env:
+          ENVIRONMENT: ${{ steps.vars.outputs.environment }}
+          PROPOSED_REPLICA_COUNT: ${{ steps.vars.outputs.proposed_replica_count }}
+          SUMMARY: ${{ steps.vars.outputs.summary }}
+          VALUES_FILE: ${{ steps.vars.outputs.values_file }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add "$VALUES_FILE"
+          if git diff --cached --quiet; then
+            echo "No changes detected; nothing to propose"
+            exit 0
+          fi
+
+          BRANCH="agent/fix-${ENVIRONMENT}-replicas-${PROPOSED_REPLICA_COUNT}-${GITHUB_RUN_ID}"
+          git checkout -b "$BRANCH"
+          git commit -m "aiops: propose ${ENVIRONMENT} replicaCount ${PROPOSED_REPLICA_COUNT}"
+          git push --set-upstream origin "$BRANCH"
+
+          BODY_FILE="$(mktemp)"
+          cat > "$BODY_FILE" <<EOF
+          ## Summary
+
+          ${SUMMARY}
+
+          ## Proposed change
+
+          - Update ${VALUES_FILE}
+          - Set replicaCount to ${PROPOSED_REPLICA_COUNT}
+          EOF
+
+          gh pr create \
+            --base main \
+            --head "$BRANCH" \
+            --title "aiops: propose ${ENVIRONMENT} replicaCount ${PROPOSED_REPLICA_COUNT}" \
+            --body-file "$BODY_FILE"

@@ -4,7 +4,7 @@ metadata:
   name: agent-remediation
 spec:
   serviceAccountName: agent-ops-sa
-  entrypoint: remediation
+  entrypoint: dispatch
   arguments:
     parameters:
       - name: action
@@ -19,8 +19,23 @@ spec:
         value: ""
       - name: environment
         value: unknown
+      - name: proposedReplicaCount
+        value: ""
+      - name: allowPullRequests
+        value: "false"
   templates:
-    - name: remediation
+    - name: dispatch
+      steps:
+        - - name: record-event
+            template: record-event
+        - - name: cluster-action
+            template: cluster-action
+            when: "{{workflow.parameters.action}} != open-fix-pr"
+          - name: open-fix-pr
+            template: open-fix-pr
+            when: "{{workflow.parameters.action}} == open-fix-pr"
+
+    - name: record-event
       container:
         image: bitnami/kubectl:1.30.3
         command:
@@ -36,6 +51,7 @@ spec:
             APP_NAMESPACE='{{workflow.parameters.appNamespace}}'
             ROLLOUT_NAME='{{workflow.parameters.rolloutName}}'
             ENVIRONMENT='{{workflow.parameters.environment}}'
+            PROPOSED_REPLICA_COUNT='{{workflow.parameters.proposedReplicaCount}}'
             CURRENT_NAMESPACE="$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)"
             TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
             REPORT_NAME="agent-report-$(date +%s)"
@@ -47,7 +63,24 @@ spec:
               --from-literal=appName="$APP_NAME" \
               --from-literal=appNamespace="$APP_NAMESPACE" \
               --from-literal=rolloutName="$ROLLOUT_NAME" \
+              --from-literal=proposedReplicaCount="$PROPOSED_REPLICA_COUNT" \
               --from-literal=summary="$SUMMARY"
+
+    - name: cluster-action
+      container:
+        image: bitnami/kubectl:1.30.3
+        command:
+          - /bin/sh
+          - -c
+        args:
+          - |
+            set -eu
+
+            ACTION='{{workflow.parameters.action}}'
+            APP_NAME='{{workflow.parameters.appName}}'
+            APP_NAMESPACE='{{workflow.parameters.appNamespace}}'
+            ROLLOUT_NAME='{{workflow.parameters.rolloutName}}'
+            TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
             case "$ACTION" in
               record-only)
@@ -78,3 +111,79 @@ spec:
                 exit 1
                 ;;
             esac
+
+    - name: open-fix-pr
+      container:
+        image: python:3.12-alpine
+        env:
+          - name: GITHUB_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: agent-ops-github
+                key: token
+                optional: true
+          - name: GITOPS_REPO
+            value: vinnie-kaboom/argo_cd_demo
+          - name: DISPATCH_EVENT_TYPE
+            value: agent-open-fix-pr
+        command:
+          - /bin/sh
+          - -c
+        args:
+          - |
+            set -eu
+
+            if [ '{{workflow.parameters.allowPullRequests}}' != 'true' ]; then
+              echo 'Pull request creation is disabled for this environment'
+              exit 0
+            fi
+
+            if [ -z "${GITHUB_TOKEN:-}" ]; then
+              echo 'GITHUB_TOKEN secret is not configured; skipping PR dispatch'
+              exit 0
+            fi
+
+            if [ -z '{{workflow.parameters.proposedReplicaCount}}' ]; then
+              echo 'proposedReplicaCount is required for open-fix-pr' >&2
+              exit 1
+            fi
+
+            python3 - <<'PY'
+              import json
+              import os
+              import sys
+              import urllib.request
+
+              repo = os.environ["GITOPS_REPO"]
+              event_type = os.environ["DISPATCH_EVENT_TYPE"]
+              token = os.environ["GITHUB_TOKEN"]
+              payload = {
+                "event_type": event_type,
+                "client_payload": {
+                  "environment": "{{workflow.parameters.environment}}",
+                  "summary": "{{workflow.parameters.summary}}",
+                  "proposed_replica_count": "{{workflow.parameters.proposedReplicaCount}}",
+                  "app_name": "{{workflow.parameters.appName}}",
+                  "app_namespace": "{{workflow.parameters.appNamespace}}",
+                },
+              }
+              request = urllib.request.Request(
+                f"https://api.github.com/repos/{repo}/dispatches",
+                data=json.dumps(payload).encode(),
+                headers={
+                  "Accept": "application/vnd.github+json",
+                  "Authorization": f"Bearer {token}",
+                  "X-GitHub-Api-Version": "2022-11-28",
+                },
+                method="POST",
+              )
+              try:
+                with urllib.request.urlopen(request) as response:
+                  if response.status != 204:
+                    raise RuntimeError(f"Unexpected status: {response.status}")
+              except Exception as exc:
+                print(f"Failed to dispatch GitOps fix PR event: {exc}", file=sys.stderr)
+                raise
+
+              print("Dispatched GitOps fix PR request")
+              PY

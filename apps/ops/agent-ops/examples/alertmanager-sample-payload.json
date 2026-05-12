@@ -1,0 +1,27 @@
+{
+  "receiver": "aiops-agent",
+  "status": "firing",
+  "commonLabels": {
+    "alertname": "HighErrorRate",
+    "app": "my-app-dev",
+    "namespace": "my-app-dev",
+    "environment": "dev",
+    "aiops_action": "open-fix-pr",
+    "proposedReplicaCount": "3"
+  },
+  "commonAnnotations": {
+    "summary": "AIOps demo from Alertmanager: propose replicaCount increase"
+  },
+  "alerts": [
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "HighErrorRate",
+        "severity": "warning"
+      },
+      "annotations": {
+        "summary": "5xx ratio exceeded threshold"
+      }
+    }
+  ]
+}
