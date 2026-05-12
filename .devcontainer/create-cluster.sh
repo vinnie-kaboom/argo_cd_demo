@@ -86,14 +86,18 @@ for secret in argocd-dex-server-tls argocd-repo-server-tls argocd-server-tls; do
   fi
 done
 
-echo "🚀 Reconciling ArgoCD Helm release..."
-helm upgrade --install argocd argo/argo-cd \
-  --version "$ARGOCD_CHART_VERSION" \
-  --namespace argocd \
-  --set server.service.type=NodePort \
-  --set configs.params."server\.insecure"=true \
-  --set dex.enabled=true \
-  --wait
+if helm status argocd -n argocd >/dev/null 2>&1; then
+  echo "ℹ️ ArgoCD Helm release already exists; skipping Helm reconcile to avoid conflicts with ArgoCD self-management."
+else
+  echo "🚀 Installing ArgoCD Helm release..."
+  helm upgrade --install argocd argo/argo-cd \
+    --version "$ARGOCD_CHART_VERSION" \
+    --namespace argocd \
+    --set server.service.type=NodePort \
+    --set configs.params."server\.insecure"=true \
+    --set dex.enabled=true \
+    --wait
+fi
 kubectl rollout status deployment/argocd-server -n argocd --timeout=180s
 kubectl rollout status deployment/argocd-repo-server -n argocd --timeout=180s
 kubectl rollout status statefulset/argocd-application-controller -n argocd --timeout=180s || true
@@ -163,7 +167,8 @@ kubectl apply -f apps/root-app.yaml
 wait_for_app root-app 240 || true
 wait_for_app vault 360 || true
 wait_for_app external-secrets 360 || true
-echo "ℹ️ Skipping demo app health waits so Argo CD UI starts even if my-app is still building/pulling."
+echo "ℹ️ Demo app health checks are intentionally non-blocking during startup."
+echo "   Argo CD UI will start even if my-app is still building, pulling, or waiting on DockerHub."
 echo "   You can check app status later with: kubectl get applications -n argocd"
 echo "✅ root-app manifest applied"
 
