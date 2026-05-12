@@ -163,12 +163,8 @@ kubectl apply -f apps/root-app.yaml
 wait_for_app root-app 240 || true
 wait_for_app vault 360 || true
 wait_for_app external-secrets 360 || true
-wait_for_app my-app-dev 420 || true
-wait_for_app my-app-staging 420 || true
-wait_for_app my-app-prod 420
-wait_for_secret my-app-dev my-app-secrets 420 || true
-wait_for_secret my-app-staging my-app-secrets 420 || true
-wait_for_secret my-app my-app-secrets 420
+echo "ℹ️ Skipping demo app health waits so Argo CD UI starts even if my-app is still building/pulling."
+echo "   You can check app status later with: kubectl get applications -n argocd"
 echo "✅ root-app manifest applied"
 
 # ── Check if Argo Rollouts is already installed ───
