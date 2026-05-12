@@ -2,6 +2,7 @@
 set -e
 
 CLUSTER_NAME=${1:-"argocd-demo"}
+ARGOCD_CHART_VERSION="7.8.3"
 
 echo "================================================"
 echo " Setting up cluster: $CLUSTER_NAME"
@@ -55,6 +56,7 @@ done
 
 echo "🚀 Reconciling ArgoCD Helm release..."
 helm upgrade --install argocd argo/argo-cd \
+  --version "$ARGOCD_CHART_VERSION" \
   --namespace argocd \
   --set server.service.type=NodePort \
   --set configs.params."server\.insecure"=true \
@@ -152,17 +154,22 @@ fi
 # ── Start port-forward in background ──────────────
 echo ""
 echo "🚀 Starting ArgoCD port-forward..."
-if pgrep -f "kubectl port-forward svc/argocd-server -n argocd 8080:80 --address 0.0.0.0" >/dev/null 2>&1; then
-  echo "✅ ArgoCD port-forward is already running on port 8080"
-elif ss -ltn | grep -q ':8080 '; then
-  echo "⚠️ Port 8080 is already in use by another process; skipping auto port-forward"
-  echo "   Use a different local port if needed, for example:"
-  echo "   kubectl port-forward svc/argocd-server -n argocd 8081:80 --address 0.0.0.0"
+pkill -f "kubectl port-forward svc/argocd-server -n argocd" 2>/dev/null || true
+
+if ss -ltn | grep -q ':8080 '; then
+  echo "⚠️ Port 8080 is in use by a non-ArgoCD process; trying 8081"
+  nohup kubectl port-forward svc/argocd-server -n argocd 8081:80 --address 0.0.0.0 > /tmp/argocd-portforward.log 2>&1 &
+  sleep 3
+  if ss -ltn | grep -q ':8081 '; then
+    echo "✅ Port-forward started on 8081"
+  else
+    echo "⚠️ Port-forward did not bind to 8081; check /tmp/argocd-portforward.log"
+  fi
 else
   nohup kubectl port-forward svc/argocd-server -n argocd 8080:80 --address 0.0.0.0 > /tmp/argocd-portforward.log 2>&1 &
   sleep 3
   if ss -ltn | grep -q ':8080 '; then
-    echo "✅ Port-forward started"
+    echo "✅ Port-forward started on 8080"
   else
     echo "⚠️ Port-forward did not bind to 8080; check /tmp/argocd-portforward.log"
   fi
@@ -175,11 +182,11 @@ echo " ✅ Environment is ready!"
 echo "================================================"
 echo ""
 echo " ArgoCD uses port 8080 when available."
-echo " If port 8080 is busy, use a different local port, for example:"
-echo "   kubectl port-forward svc/argocd-server -n argocd 8081:80 --address 0.0.0.0"
+echo " If port 8080 is busy, this script auto-falls back to 8081."
+echo " Manual fallback: kubectl port-forward svc/argocd-server -n argocd 8081:80 --address 0.0.0.0"
 echo ""
 echo " On Windows/Mac — open:"
-echo "   http://localhost:8080"
+echo "   http://localhost:8080 (or http://localhost:8081 if fallback was used)"
 echo ""
 echo " On iPad — open the Ports tab in VS Code"
 echo " and click the 🌐 globe icon next to port 8080"
