@@ -1,0 +1,31 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: agent-ops-cluster-role
+rules:
+  - apiGroups:
+      - argoproj.io
+    resources:
+      - applications
+      - workflows
+      - workflowtemplates
+      - rollouts
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - patch
+      - update
+  - apiGroups:
+      - ""
+    resources:
+      - configmaps
+      - events
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - patch
+      - update

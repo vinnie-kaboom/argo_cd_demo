@@ -12,9 +12,16 @@ patches:
         path: /metadata/name
         value: agent-ops-prod
   - target:
+      kind: ClusterRoleBinding
+      name: agent-ops-cluster-rolebinding
+    patch: |-
+      - op: replace
+        path: /subjects/0/namespace
+        value: agent-ops-prod
+  - target:
       kind: WorkflowTemplate
       name: agent-remediation
     patch: |-
       - op: replace
-        path: /spec/arguments/parameters/1/value
+        path: /spec/arguments/parameters/5/value
         value: prod

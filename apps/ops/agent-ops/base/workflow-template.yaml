@@ -7,19 +7,74 @@ spec:
   entrypoint: remediation
   arguments:
     parameters:
-      - name: message
-        value: no-message
+      - name: action
+        value: record-only
+      - name: summary
+        value: no-summary
+      - name: appName
+        value: my-app-dev
+      - name: appNamespace
+        value: my-app-dev
+      - name: rolloutName
+        value: ""
       - name: environment
         value: unknown
   templates:
     - name: remediation
       container:
-        image: alpine:3.20
+        image: bitnami/kubectl:1.30.3
         command:
           - /bin/sh
           - -c
         args:
           - |
-            echo "[agent] environment={{workflow.parameters.environment}}";
-            echo "[agent] event={{workflow.parameters.message}}";
-            echo "[agent] next action: hook this step to ticketing/PR/workflow dispatch";
+            set -eu
+
+            ACTION='{{workflow.parameters.action}}'
+            SUMMARY='{{workflow.parameters.summary}}'
+            APP_NAME='{{workflow.parameters.appName}}'
+            APP_NAMESPACE='{{workflow.parameters.appNamespace}}'
+            ROLLOUT_NAME='{{workflow.parameters.rolloutName}}'
+            ENVIRONMENT='{{workflow.parameters.environment}}'
+            CURRENT_NAMESPACE="$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)"
+            TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            REPORT_NAME="agent-report-$(date +%s)"
+
+            kubectl -n "$CURRENT_NAMESPACE" create configmap "$REPORT_NAME" \
+              --from-literal=timestamp="$TIMESTAMP" \
+              --from-literal=action="$ACTION" \
+              --from-literal=environment="$ENVIRONMENT" \
+              --from-literal=appName="$APP_NAME" \
+              --from-literal=appNamespace="$APP_NAMESPACE" \
+              --from-literal=rolloutName="$ROLLOUT_NAME" \
+              --from-literal=summary="$SUMMARY"
+
+            case "$ACTION" in
+              record-only)
+                echo "Recorded event without mutation"
+                ;;
+              refresh-app)
+                kubectl -n argocd patch applications.argoproj.io "$APP_NAME" --type merge \
+                  -p "{\"metadata\":{\"annotations\":{\"argocd.argoproj.io/refresh\":\"hard\",\"ops.argocd-demo/last-triggered-at\":\"$TIMESTAMP\"}}}"
+                ;;
+              pause-rollout)
+                if [ -z "$ROLLOUT_NAME" ]; then
+                  echo "rolloutName is required for pause-rollout" >&2
+                  exit 1
+                fi
+                kubectl -n "$APP_NAMESPACE" patch rollouts.argoproj.io "$ROLLOUT_NAME" --type merge \
+                  -p '{"spec":{"paused":true}}'
+                ;;
+              resume-rollout)
+                if [ -z "$ROLLOUT_NAME" ]; then
+                  echo "rolloutName is required for resume-rollout" >&2
+                  exit 1
+                fi
+                kubectl -n "$APP_NAMESPACE" patch rollouts.argoproj.io "$ROLLOUT_NAME" --type merge \
+                  -p '{"spec":{"paused":false}}'
+                ;;
+              *)
+                echo "Unsupported action: $ACTION" >&2
+                exit 1
+                ;;
+            esac

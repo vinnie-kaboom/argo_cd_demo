@@ -25,16 +25,36 @@ spec:
                   name: agent-remediation
                 arguments:
                   parameters:
-                    - name: message
+                    - name: action
+                      value: record-only
+                    - name: summary
                       value: default
+                    - name: appName
+                      value: my-app-dev
+                    - name: appNamespace
+                      value: my-app-dev
+                    - name: rolloutName
+                      value: ""
                     - name: environment
                       value: default
           parameters:
             - src:
                 dependencyName: remediation-dep
-                dataKey: body.message
+                dataKey: body.action
               dest: spec.arguments.parameters.0.value
             - src:
                 dependencyName: remediation-dep
-                dataKey: body.environment
+                dataKey: body.summary
               dest: spec.arguments.parameters.1.value
+            - src:
+                dependencyName: remediation-dep
+                dataKey: body.appName
+              dest: spec.arguments.parameters.2.value
+            - src:
+                dependencyName: remediation-dep
+                dataKey: body.appNamespace
+              dest: spec.arguments.parameters.3.value
+            - src:
+                dependencyName: remediation-dep
+                dataKey: body.rolloutName
+              dest: spec.arguments.parameters.4.value
