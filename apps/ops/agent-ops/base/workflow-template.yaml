@@ -1,0 +1,25 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: agent-remediation
+spec:
+  serviceAccountName: agent-ops-sa
+  entrypoint: remediation
+  arguments:
+    parameters:
+      - name: message
+        value: no-message
+      - name: environment
+        value: unknown
+  templates:
+    - name: remediation
+      container:
+        image: alpine:3.20
+        command:
+          - /bin/sh
+          - -c
+        args:
+          - |
+            echo "[agent] environment={{workflow.parameters.environment}}";
+            echo "[agent] event={{workflow.parameters.message}}";
+            echo "[agent] next action: hook this step to ticketing/PR/workflow dispatch";

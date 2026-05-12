@@ -1,0 +1,26 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: ai-platform
+  namespace: argocd
+spec:
+  description: AI platform workloads with scoped destinations for agent runtimes
+
+  sourceRepos:
+    - https://github.com/vinnie-kaboom/argo_cd_demo.git
+
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: agent-ops-dev
+    - server: https://kubernetes.default.svc
+      namespace: agent-ops-staging
+    - server: https://kubernetes.default.svc
+      namespace: agent-ops-prod
+
+  clusterResourceWhitelist:
+    - group: "*"
+      kind: "*"
+
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"

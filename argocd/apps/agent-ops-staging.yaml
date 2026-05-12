@@ -1,0 +1,23 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: agent-ops-staging
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: ai-platform
+  source:
+    repoURL: https://github.com/vinnie-kaboom/argo_cd_demo.git
+    targetRevision: HEAD
+    path: apps/ops/agent-ops/overlays/staging
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: agent-ops-staging
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

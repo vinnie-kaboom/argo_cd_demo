@@ -1,0 +1,40 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Sensor
+metadata:
+  name: agent-remediation-sensor
+spec:
+  template:
+    serviceAccountName: agent-ops-sa
+  dependencies:
+    - name: remediation-dep
+      eventSourceName: agent-webhook
+      eventName: remediation
+  triggers:
+    - template:
+        name: run-agent-remediation
+        argoWorkflow:
+          operation: submit
+          source:
+            resource:
+              apiVersion: argoproj.io/v1alpha1
+              kind: Workflow
+              metadata:
+                generateName: agent-remediation-
+              spec:
+                workflowTemplateRef:
+                  name: agent-remediation
+                arguments:
+                  parameters:
+                    - name: message
+                      value: default
+                    - name: environment
+                      value: default
+          parameters:
+            - src:
+                dependencyName: remediation-dep
+                dataKey: body.message
+              dest: spec.arguments.parameters.0.value
+            - src:
+                dependencyName: remediation-dep
+                dataKey: body.environment
+              dest: spec.arguments.parameters.1.value

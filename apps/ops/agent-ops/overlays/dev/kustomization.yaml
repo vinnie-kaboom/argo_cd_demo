@@ -1,0 +1,20 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: agent-ops-dev
+resources:
+  - ../../base
+patches:
+  - target:
+      kind: Namespace
+      name: REPLACE_NAMESPACE
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: agent-ops-dev
+  - target:
+      kind: WorkflowTemplate
+      name: agent-remediation
+    patch: |-
+      - op: replace
+        path: /spec/arguments/parameters/1/value
+        value: dev

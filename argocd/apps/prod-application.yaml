@@ -13,13 +13,13 @@ spec:
       path: helm
       helm:
         valueFiles:
-          - $values/apps/my-app/deploy/overlays/prod/values.yaml
+          - $values/apps/app/my-app/deploy/overlays/prod/values.yaml
     - repoURL: https://github.com/vinnie-kaboom/argo_cd_demo.git
       targetRevision: HEAD
       ref: values
     - repoURL: https://github.com/vinnie-kaboom/argo_cd_demo.git
       targetRevision: HEAD
-      path: apps/my-app/external-secrets/prod
+      path: apps/app/my-app/external-secrets/prod
   destination:
     server: https://kubernetes.default.svc
     namespace: my-app
