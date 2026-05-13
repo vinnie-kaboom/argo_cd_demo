@@ -31,11 +31,34 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Docker/Network diagnostics
+        env:
+          DOCKERHUB_USERNAME: vinnie-kaboom
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          docker version
+          docker info
+          echo "username=${DOCKERHUB_USERNAME}"
+          echo "token_length=${#DOCKERHUB_TOKEN}"
+          # Docker Hub should return 401 + WWW-Authenticate when reachable.
+          curl -sSI https://registry-1.docker.io/v2/ | sed -n '1,20p'
+
+      - name: Raw docker login test (bypass action)
+        env:
+          DOCKERHUB_USERNAME: vinnie-kaboom
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$DOCKERHUB_TOKEN" | docker login docker.io -u "$DOCKERHUB_USERNAME" --password-stdin
+
       - name: Log in to DockerHub
         uses: docker/login-action@v3
         with:
+          registry: docker.io
           username: vinnie-kaboom
           password: ${{ secrets.DOCKERHUB_TOKEN }}
+          logout: false
 
       - name: Preflight DockerHub push permissions
         run: |
