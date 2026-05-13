@@ -3,6 +3,8 @@ kind: Secret
 metadata:
   name: vault-token
   namespace: my-app-staging
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
 type: Opaque
 stringData:
   token: root
