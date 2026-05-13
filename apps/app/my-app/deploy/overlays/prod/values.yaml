@@ -1,6 +1,6 @@
 image:
   repository: vinnie-kaboom/my-app
-  tag: latest
+  tag: "latest"
   pullPolicy: IfNotPresent
   pullSecrets: []
 
