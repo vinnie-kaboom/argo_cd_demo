@@ -16,7 +16,7 @@ jobs:
     permissions:
       contents: read
     env:
-      IMAGE_NAME: vinnie-kaboom/my-app
+      IMAGE_NAME: vinniekaboom/my-app
       DISPATCH_REPO: vinnie-kaboom/argo_cd_demo
 
     steps:
@@ -25,7 +25,7 @@ jobs:
 
       - name: Validate required secrets
         run: |
-          [[ -n "${{ secrets.DOCKERHUB_TOKEN_V2 }}" ]] || { echo "Missing DOCKERHUB_TOKEN_V2"; exit 1; }
+          [[ -n "${{ secrets.DOCKERHUB_TOKEN }}" ]] || { echo "Missing DOCKERHUB_TOKEN"; exit 1; }
           [[ -n "${{ secrets.GH_DISPATCH_TOKEN }}" ]] || { echo "Missing GH_DISPATCH_TOKEN"; exit 1; }
 
       - name: Set up Docker Buildx
@@ -33,8 +33,8 @@ jobs:
 
       - name: Docker/Network diagnostics
         env:
-          DOCKERHUB_USERNAME: vinnie-kaboom
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN_V2 }}
+          DOCKERHUB_USERNAME: vinniekaboom
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
           set -euo pipefail
           docker version
@@ -46,8 +46,8 @@ jobs:
 
       - name: Raw docker login test (bypass action)
         env:
-          DOCKERHUB_USERNAME: vinnie-kaboom
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN_V2 }}
+          DOCKERHUB_USERNAME: vinniekaboom
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
           set -euo pipefail
           printf '%s' "$DOCKERHUB_TOKEN" | docker login docker.io -u "$DOCKERHUB_USERNAME" --password-stdin
@@ -56,8 +56,8 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: docker.io
-          username: vinnie-kaboom
-          password: ${{ secrets.DOCKERHUB_TOKEN_V2 }}
+          username: vinniekaboom
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
           logout: false
 
       - name: Preflight DockerHub push permissions
@@ -67,7 +67,7 @@ jobs:
           echo "Checking push permissions for ${IMAGE_NAME}:${CHECK_TAG}"
           if ! printf 'FROM scratch\nLABEL purpose="push-permission-check"\n' | docker buildx build --platform linux/amd64 --push -t "${IMAGE_NAME}:${CHECK_TAG}" -; then
             echo "Docker Hub push preflight failed."
-            echo "Verify DOCKERHUB_TOKEN_V2 is a PAT from vinnie-kaboom with Read & Write permissions and can push to ${IMAGE_NAME}."
+            echo "Verify DOCKERHUB_TOKEN is a PAT from vinniekaboom with Read & Write permissions and can push to ${IMAGE_NAME}."
             exit 1
           fi
 
