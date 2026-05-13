@@ -16,7 +16,7 @@ jobs:
     permissions:
       contents: read
     env:
-      IMAGE_NAME: vinniekaboom/my-app
+      IMAGE_NAME: vincentzamora123/my-app
       DISPATCH_REPO: vinnie-kaboom/argo_cd_demo
 
     steps:
@@ -33,7 +33,7 @@ jobs:
 
       - name: Docker/Network diagnostics
         env:
-          DOCKERHUB_USERNAME: vinniekaboom
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
           set -euo pipefail
@@ -46,7 +46,7 @@ jobs:
 
       - name: Raw docker login test (bypass action)
         env:
-          DOCKERHUB_USERNAME: vinniekaboom
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
           set -euo pipefail
@@ -56,7 +56,7 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: docker.io
-          username: vinniekaboom
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
           logout: false
 
@@ -67,7 +67,7 @@ jobs:
           echo "Checking push permissions for ${IMAGE_NAME}:${CHECK_TAG}"
           if ! printf 'FROM scratch\nLABEL purpose="push-permission-check"\n' | docker buildx build --platform linux/amd64 --push -t "${IMAGE_NAME}:${CHECK_TAG}" -; then
             echo "Docker Hub push preflight failed."
-            echo "Verify DOCKERHUB_TOKEN is a PAT from vinniekaboom with Read & Write permissions and can push to ${IMAGE_NAME}."
+            echo "Verify DOCKERHUB_TOKEN is a PAT from vincentzamora123 with Read & Write permissions and can push to ${IMAGE_NAME}."
             exit 1
           fi
 
