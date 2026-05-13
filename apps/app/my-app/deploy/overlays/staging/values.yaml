@@ -1,5 +1,5 @@
 image:
-  repository: vinnie-kaboom/my-app
+  repository: vincentzamora123/my-app
   tag: latest
   pullPolicy: IfNotPresent
   pullSecrets: []
