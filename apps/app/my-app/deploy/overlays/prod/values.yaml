@@ -1,6 +1,6 @@
 image:
   repository: vincentzamora123/my-app
-  tag: latest
+  tag: "latest"
   pullPolicy: IfNotPresent
   pullSecrets: []
 
