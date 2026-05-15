@@ -2,6 +2,11 @@
 # ArgoCD Demo on GitHub Codespaces
 ## Complete Setup Guide
 
+## Docs quick links
+
+- Root app (App of Apps): [apps/README.md](apps/README.md)
+- Agent Ops remediation pipeline: [apps/ops/agent-ops/README.md](apps/ops/agent-ops/README.md)
+
 A 4-node Kubernetes cluster (2 control-plane + 2 workers) with ArgoCD and Claude Code CLI
 — fully in the cloud, no local Docker or admin rights needed. Works on Windows, Mac and iPad.
 

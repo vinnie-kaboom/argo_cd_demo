@@ -61,3 +61,7 @@ argocd app get root-app
 
 - `targetRevision: HEAD` is convenient for demos but can be risky in production. Consider pinning to a branch or tag.
 - Recursive include of `*.yaml` means any YAML under `argocd/` can be treated as part of bootstrap; keep that directory curated.
+
+## Related docs
+
+- Agent Ops event-driven remediation pipeline: [ops/agent-ops/README.md](ops/agent-ops/README.md)
