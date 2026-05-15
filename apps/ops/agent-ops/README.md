@@ -1,62 +1,153 @@
-# Agent Ops Event-Driven Remediation Pipeline
+# Agent Ops
 
-This document explains how Agent Ops receives events and triggers automated remediation workflows.
+Agent Ops is a small automation system for handling alerts and remediation actions.
 
-## What Agent Ops does
+If you want the one-line version:
 
-Agent Ops is an event-driven automation layer built with Argo Events + Argo Workflows.
+- Something happens in the cluster
+- Agent Ops receives the event
+- It records what happened
+- Then it either fixes the cluster or starts a GitHub-based fix flow
 
-It can:
-- Record incoming events as reports (ConfigMaps)
-- Refresh an Argo CD Application
-- Pause or resume an Argo Rollout
-- Optionally dispatch a GitHub event to open a fix PR flow
+## Simple flow
 
-## Main components
-
-- Event source webhook: [base/eventsource.yaml](base/eventsource.yaml)
-- Event bus (NATS): [base/eventbus.yaml](base/eventbus.yaml)
-- Sensor (parameter mapping + workflow trigger): [base/sensor.yaml](base/sensor.yaml)
-- Workflow logic: [base/workflow-template.yaml](base/workflow-template.yaml)
-- RBAC: [base/role.yaml](base/role.yaml), [base/clusterrole.yaml](base/clusterrole.yaml)
-
-## Logic diagram
-
-```mermaid
-flowchart TD
-  A[Webhook EventSource] --> B[EventBus]
-  B --> C[Sensor]
-  C --> D[WorkflowTemplate]
-  D --> E[Record event]
-  E --> F{action?}
-  F -->|cluster action| G[patch app or rollout]
-  F -->|open-fix-pr| H{guards pass?}
-  H -->|yes| I[dispatch GitHub event]
-  H -->|no| J[exit without PR]
-  G --> K[record ConfigMap report]
-  I --> L[GitHub workflow opens fix PR]
-  M[dev overlay] --> N[allowPullRequests=true]
-  O[staging/prod overlays] --> P[allowPullRequests=false]
+```text
+Alert or webhook
+      |
+      v
+Agent Ops EventSource
+      |
+      v
+EventBus
+      |
+      v
+Sensor
+      |
+      v
+agent-remediation Workflow
+      |
+      +--> record a report
+      |
+      +--> if action = cluster change:
+      |        patch Argo CD app or Argo Rollout
+      |
+      +--> if action = open-fix-pr:
+               dispatch GitHub event for a fix PR
 ```
 
-If your markdown viewer does not render Mermaid, the flow is:
+## What it is for
 
-1. A webhook hits the Agent Ops EventSource.
-2. The EventBus delivers it to the Sensor.
-3. The Sensor starts the `agent-remediation` WorkflowTemplate.
-4. The workflow always records an event report first.
-5. If the action is a cluster action, it patches Argo CD applications or Argo Rollouts.
-6. If the action is `open-fix-pr`, it only dispatches a GitHub event when pull requests are allowed and the required inputs are present.
+Agent Ops is used to do one of these things when an alert arrives:
 
-## Environment behavior
+1. Record the event so there is an audit trail.
+2. Refresh an Argo CD Application.
+3. Pause or resume an Argo Rollout.
+4. Optionally ask GitHub to open a fix PR flow.
 
-- Dev overlay enables PR path by default:
-  - [overlays/dev/kustomization.yaml](overlays/dev/kustomization.yaml)
-- Staging and prod keep PR path disabled by default:
-  - [overlays/staging/kustomization.yaml](overlays/staging/kustomization.yaml)
-  - [overlays/prod/kustomization.yaml](overlays/prod/kustomization.yaml)
+## What happens step by step
 
-## Alertmanager integration examples
+1. A webhook hits the EventSource in [base/eventsource.yaml](base/eventsource.yaml).
+2. Argo Events sends that message through the EventBus in [base/eventbus.yaml](base/eventbus.yaml).
+3. The Sensor in [base/sensor.yaml](base/sensor.yaml) reads the payload and turns it into workflow parameters.
+4. The workflow in [base/workflow-template.yaml](base/workflow-template.yaml) always records a ConfigMap report first.
+5. After that, it takes one of two paths:
+   - If the action is a cluster action, it patches Argo CD or a Rollout.
+   - If the action is `open-fix-pr`, it can dispatch a GitHub event to start a fix PR flow.
 
-- Receiver config: [examples/alertmanager-receiver.yaml](examples/alertmanager-receiver.yaml)
-- Sample payload: [examples/alertmanager-sample-payload.json](examples/alertmanager-sample-payload.json)
+## The two main event types
+
+### 1. Remediation webhook
+
+This is the direct control path.
+
+Example actions:
+- `record-only`
+- `refresh-app`
+- `pause-rollout`
+- `resume-rollout`
+
+The workflow gets values like:
+- app name
+- namespace
+- rollout name
+- environment
+- proposed replica count
+
+### 2. Alertmanager webhook
+
+This is the alert-driven path.
+
+The example Alertmanager receiver in [examples/alertmanager-receiver.yaml](examples/alertmanager-receiver.yaml) sends alerts to Agent Ops.
+
+The sample alert payload in [examples/alertmanager-sample-payload.json](examples/alertmanager-sample-payload.json) shows how alert labels map into workflow parameters.
+
+## What the workflow does
+
+The workflow in [base/workflow-template.yaml](base/workflow-template.yaml) has three jobs:
+
+1. Record the event.
+2. Run the requested cluster action.
+3. Optionally dispatch a GitHub repository event to open a fix PR flow.
+
+### Record event
+
+The workflow writes a ConfigMap report with:
+- timestamp
+- action
+- environment
+- app name
+- namespace
+- rollout name
+- proposed replica count
+- summary
+
+### Cluster actions
+
+If the action is not `open-fix-pr`, the workflow can:
+
+- patch an Argo CD Application to refresh it
+- patch a Rollout to pause it
+- patch a Rollout to resume it
+
+### Fix PR flow
+
+If the action is `open-fix-pr`, the workflow only continues when:
+
+- pull requests are allowed in that environment
+- a GitHub token exists
+- `proposedReplicaCount` is present
+
+If all of that is true, it sends a `repository_dispatch` event to GitHub.
+
+## Why dev/staging/prod behave differently
+
+The overlays control whether GitHub PR creation is allowed.
+
+- Dev: [overlays/dev/kustomization.yaml](overlays/dev/kustomization.yaml)
+- Staging: [overlays/staging/kustomization.yaml](overlays/staging/kustomization.yaml)
+- Prod: [overlays/prod/kustomization.yaml](overlays/prod/kustomization.yaml)
+
+In practice:
+- Dev allows the PR path.
+- Staging and prod keep it off by default.
+
+## RBAC
+
+Agent Ops runs as the `agent-ops-sa` service account and uses RBAC from:
+- [base/role.yaml](base/role.yaml)
+- [base/clusterrole.yaml](base/clusterrole.yaml)
+- [base/rolebinding.yaml](base/rolebinding.yaml)
+- [base/clusterrolebinding.yaml](base/clusterrolebinding.yaml)
+
+This is what gives it permission to record events and patch the resources it manages.
+
+## Quick mental model
+
+Think of Agent Ops like this:
+
+- Event comes in
+- Sensor translates it
+- Workflow records it
+- Workflow either changes the cluster or starts a PR flow
+
+That is the whole system.
