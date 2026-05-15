@@ -9,6 +9,16 @@ on:
       - Dockerfile
       - .github/workflows/**
   workflow_dispatch:
+    inputs:
+      target_env:
+        description: "Environment to update in GitOps repo"
+        required: true
+        default: dev
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
 
 jobs:
   build-push-dispatch:
@@ -101,6 +111,21 @@ jobs:
         run: |
           docker buildx imagetools inspect "${IMAGE_NAME}:${{ steps.meta.outputs.version }}"
 
+      - name: Resolve dispatch target environment
+        id: dispatch_vars
+        env:
+          INPUT_TARGET_ENV: ${{ inputs.target_env }}
+        run: |
+          TARGET_ENV="${INPUT_TARGET_ENV:-dev}"
+          case "$TARGET_ENV" in
+            dev|staging|prod) ;;
+            *)
+              echo "target_env must be one of: dev, staging, prod"
+              exit 1
+              ;;
+          esac
+          echo "target_env=$TARGET_ENV" >> "$GITHUB_OUTPUT"
+
       - name: Preflight GitHub dispatch token access
         run: |
           set -euo pipefail
@@ -129,11 +154,13 @@ jobs:
           exit 1
 
       - name: Dispatch image tag to GitOps repo
+        env:
+          TARGET_ENV: ${{ steps.dispatch_vars.outputs.target_env }}
         run: |
           set -euo pipefail
           API_URL="https://api.github.com/repos/${DISPATCH_REPO}/dispatches"
-          PAYLOAD=$(cat <<'JSON'
-          {"event_type":"my-app-image-published","client_payload":{"image_tag":"${{ steps.meta.outputs.version }}"}}
+          PAYLOAD=$(cat <<JSON
+          {"event_type":"my-app-image-published","client_payload":{"image_tag":"${{ steps.meta.outputs.version }}","target_env":"${TARGET_ENV}"}}
           JSON
           )
 
@@ -146,7 +173,7 @@ jobs:
             -d "$PAYLOAD")
 
           if [[ "$STATUS" == "204" ]]; then
-            echo "Repository dispatch sent successfully for image tag ${{ steps.meta.outputs.version }}."
+            echo "Repository dispatch sent successfully for image tag ${{ steps.meta.outputs.version }} (env=${TARGET_ENV})."
             exit 0
           fi
 

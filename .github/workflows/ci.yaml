@@ -1,10 +1,8 @@
-name: GitOps – Update my-app Image Tag
+name: GitOps - Promote my-app Image Tag
 
-# This repo is the GitOps repo. The application source lives in:
-#   https://github.com/vinnie-kaboom/my-app
-# The app repo should build/push the Docker image, then notify this repo with
-# repository_dispatch. This workflow then updates the prod Helm values file.
-# Manual workflow_dispatch is kept as a fallback.
+# This repo is the GitOps repo.
+# It receives image publication events and updates environment-specific values.
+# Manual workflow_dispatch is available for controlled promotions and rollbacks.
 on:
   repository_dispatch:
     types:
@@ -15,9 +13,18 @@ on:
         description: "Docker image tag to promote in GitOps"
         required: true
         type: string
+      target_env:
+        description: "Environment values file to update"
+        required: true
+        default: dev
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
 
 env:
-  VALUES_FILE: apps/app/my-app/deploy/overlays/prod/values.yaml
+  VALUES_ROOT: apps/app/my-app/deploy/overlays
 
 jobs:
   update-image-tag:
@@ -32,34 +39,54 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Resolve requested image tag
+      - name: Resolve requested image tag and environment
         id: vars
         env:
           DISPATCH_TAG: ${{ github.event.client_payload.image_tag }}
+          DISPATCH_ENV: ${{ github.event.client_payload.target_env }}
           INPUT_TAG: ${{ inputs.image_tag }}
+          INPUT_ENV: ${{ inputs.target_env }}
         run: |
           TAG="${DISPATCH_TAG:-$INPUT_TAG}"
           if [[ -z "$TAG" ]]; then
             echo "image_tag is required via repository_dispatch.client_payload.image_tag or workflow_dispatch input"
             exit 1
           fi
-          echo "image_tag=$TAG" >> "$GITHUB_OUTPUT"
 
-      - name: Update production image tag
+          TARGET_ENV="${DISPATCH_ENV:-$INPUT_ENV}"
+          TARGET_ENV="${TARGET_ENV:-dev}"
+          case "$TARGET_ENV" in
+            dev|staging|prod) ;;
+            *)
+              echo "target_env must be one of: dev, staging, prod"
+              exit 1
+              ;;
+          esac
+
+          VALUES_FILE="${{ env.VALUES_ROOT }}/${TARGET_ENV}/values.yaml"
+
+          echo "image_tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "target_env=$TARGET_ENV" >> "$GITHUB_OUTPUT"
+          echo "values_file=$VALUES_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Update selected environment image tag
         env:
           NEW_TAG: ${{ steps.vars.outputs.image_tag }}
-          VALUES_FILE: ${{ env.VALUES_FILE }}
+          TARGET_ENV: ${{ steps.vars.outputs.target_env }}
+          VALUES_FILE: ${{ steps.vars.outputs.values_file }}
         run: |
           sed -i "s|^  tag:.*|  tag: \"${NEW_TAG}\"|" "${VALUES_FILE}"
-          echo "Updated ${VALUES_FILE} → tag: ${NEW_TAG}"
+          echo "Updated ${VALUES_FILE} -> tag: ${NEW_TAG} (env=${TARGET_ENV})"
 
       - name: Commit and push
         env:
           NEW_TAG: ${{ steps.vars.outputs.image_tag }}
+          TARGET_ENV: ${{ steps.vars.outputs.target_env }}
+          VALUES_FILE: ${{ steps.vars.outputs.values_file }}
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add "${VALUES_FILE}"
           git diff --cached --quiet && echo "No changes to commit" && exit 0
-          git commit -m "gitops: promote my-app image to ${NEW_TAG} [skip ci]"
+          git commit -m "gitops: promote my-app ${TARGET_ENV} image to ${NEW_TAG} [skip ci]"
           git push
