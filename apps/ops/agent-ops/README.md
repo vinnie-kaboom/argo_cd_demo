@@ -24,63 +24,29 @@ It can:
 
 ```mermaid
 flowchart TD
-  A[Webhook EventSource: agent-webhook]
-  A1[/agent/remediate]
-  A2[/agent/alerts from Alertmanager]
-  B[Argo Events EventBus: NATS default]
-  C[Sensor: agent-remediation-sensor]
-  D[Create Workflow from WorkflowTemplate: agent-remediation]
-
-  E[Step 1: record-event]
-  E1[Create ConfigMap report with action, env, app, summary, timestamp]
-
-  F{Dispatch by action}
-  F1[action != open-fix-pr]
-  F2[action == open-fix-pr]
-
-  G[Step 2a: cluster-action]
-  G1[record-only]
-  G2[refresh-app: patch Argo CD Application annotation]
-  G3[pause-rollout: patch Rollout spec.paused=true]
-  G4[resume-rollout: patch Rollout spec.paused=false]
-
-  H[Step 2b: open-fix-pr]
-  H1{allowPullRequests == true?}
-  H2{GITHUB_TOKEN present?}
-  H3{proposedReplicaCount present?}
-  H4[POST repository_dispatch to GitHub API]
-  H5[Downstream GitHub workflow opens fix PR]
-
-  I[RBAC + SA: agent-ops-sa]
-  J[Env overlays]
-  J1[dev: allowPullRequests true]
-  J2[staging/prod: allowPullRequests false by default]
-
-  A --> A1
-  A --> A2
-  A --> B --> C --> D
-  C -->|map payload fields to workflow parameters| D
-  D --> E --> E1 --> F
-
-  F --> F1 --> G
-  G --> G1
-  G --> G2
-  G --> G3
-  G --> G4
-
-  F --> F2 --> H --> H1
-  H1 -->|yes| H2
-  H1 -->|no| K[Exit: PR creation disabled]
-  H2 -->|yes| H3
-  H2 -->|no| L[Exit: token missing]
-  H3 -->|yes| H4 --> H5
-  H3 -->|no| M[Fail: missing proposedReplicaCount]
-
-  I --> D
-  I --> G
-  I --> E
-  J --> D
+  A[Webhook EventSource] --> B[EventBus]
+  B --> C[Sensor]
+  C --> D[WorkflowTemplate]
+  D --> E[Record event]
+  E --> F{action?}
+  F -->|cluster action| G[patch app or rollout]
+  F -->|open-fix-pr| H{guards pass?}
+  H -->|yes| I[dispatch GitHub event]
+  H -->|no| J[exit without PR]
+  G --> K[record ConfigMap report]
+  I --> L[GitHub workflow opens fix PR]
+  M[dev overlay] --> N[allowPullRequests=true]
+  O[staging/prod overlays] --> P[allowPullRequests=false]
 ```
+
+If your markdown viewer does not render Mermaid, the flow is:
+
+1. A webhook hits the Agent Ops EventSource.
+2. The EventBus delivers it to the Sensor.
+3. The Sensor starts the `agent-remediation` WorkflowTemplate.
+4. The workflow always records an event report first.
+5. If the action is a cluster action, it patches Argo CD applications or Argo Rollouts.
+6. If the action is `open-fix-pr`, it only dispatches a GitHub event when pull requests are allowed and the required inputs are present.
 
 ## Environment behavior
 
