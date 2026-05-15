@@ -10,6 +10,8 @@ config:
   PORT: "8080"
   LOG_LEVEL: error
   ENVIRONMENT: prod
+  APP_COLOR: tomato
+  DEMO_BANNER: PROD PIPELINE - CHANGE ME
 
 secret:
   create: false

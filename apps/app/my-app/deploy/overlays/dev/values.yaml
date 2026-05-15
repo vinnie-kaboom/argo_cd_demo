@@ -10,6 +10,8 @@ config:
   PORT: "8080"
   LOG_LEVEL: debug
   ENVIRONMENT: dev
+  APP_COLOR: springgreen
+  DEMO_BANNER: DEV PIPELINE - CHANGE ME
 
 secret:
   create: false

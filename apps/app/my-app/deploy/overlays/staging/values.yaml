@@ -10,6 +10,8 @@ config:
   PORT: "8080"
   LOG_LEVEL: warn
   ENVIRONMENT: staging
+  APP_COLOR: gold
+  DEMO_BANNER: STAGING PIPELINE - CHANGE ME
 
 secret:
   create: false
