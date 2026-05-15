@@ -40,17 +40,17 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
-        def _respond_html(self, code, body):
-                payload = body.encode()
-                self.send_response(code)
-                self.send_header("Content-Type", "text/html; charset=utf-8")
-                self.send_header("Content-Length", str(len(payload)))
-                self.end_headers()
-                self.wfile.write(payload)
+    def _respond_html(self, code, body):
+        payload = body.encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
 
-        def _ui_html(self):
-                now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-                return f"""<!doctype html>
+    def _ui_html(self):
+        now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        return f"""<!doctype html>
 <html lang=\"en\">
 <head>
     <meta charset=\"utf-8\">
