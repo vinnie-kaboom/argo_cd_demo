@@ -12,6 +12,7 @@
 #    l                   Logs (selected pod)
 #    e                   Exec shell (selected pod)
 #    d                   Describe resource
+#    y                   View resource YAML
 #    r                   Rolling restart (deploy/sts/ds)
 #    D                   Delete resource (with confirm)
 #    /                   Search/filter current view
@@ -2099,8 +2100,9 @@ _show_argocd_tree() {
     _eol
 
     _at 2 1
-    printf '%b%b[q]%b back  %b[↑↓/j/k]%b nav  %b[g/G]%b top/bottom  %b[Enter]%b describe  %b[l]%b logs(pod)  %b[f]%b fwd(pod/svc)  %b[s]%b sync app%b' \
+    printf '%b%b[q]%b back  %b[↑↓/j/k]%b nav  %b[g/G]%b top/bottom  %b[Enter]%b describe  %b[y]%b yaml  %b[l]%b logs(pod)  %b[f]%b fwd(pod/svc)  %b[s]%b sync app%b' \
       "$BG_BAR" "$C_CYAN" "$C_RESET$BG_BAR" \
+      "$C_CYAN" "$C_RESET$BG_BAR" \
       "$C_CYAN" "$C_RESET$BG_BAR" \
       "$C_CYAN" "$C_RESET$BG_BAR" \
       "$C_CYAN" "$C_RESET$BG_BAR" \
@@ -2238,6 +2240,18 @@ Likely causes: app is OutOfSync, pruned resource, or reconcile still in progress
 
 Tip: press [s] in the tree view to trigger app sync, then refresh and retry Enter."
           fi
+        fi
+        _clear
+        ;;
+      y|Y)
+        local kind ns_res name_res _sync _health
+        IFS=$'\t' read -r kind ns_res name_res _sync _health <<< "${rows[$selected]}"
+        local y_res
+        y_res=$(_argocd_kind_to_resource "$kind")
+        if [[ "$ns_res" == "-" ]]; then
+          _show_resource_yaml "$y_res" "$name_res" "default"
+        else
+          _show_resource_yaml "$y_res" "$name_res" "$ns_res"
         fi
         _clear
         ;;
@@ -3225,6 +3239,30 @@ _port_forward() {
   LAST_REFRESH=0
 }
 
+_show_resource_yaml() {
+  local resource="$1" name="$2" ns="${3:-default}"
+  local output rc
+
+  output=$(kubectl get "$resource" "$name" -n "$ns" -o yaml 2>&1)
+  rc=$?
+
+  if (( rc != 0 )); then
+    local cluster_out cluster_rc
+    cluster_out=$(kubectl get "$resource" "$name" -o yaml 2>&1)
+    cluster_rc=$?
+    if (( cluster_rc == 0 )); then
+      output="$cluster_out"
+      rc=0
+    fi
+  fi
+
+  if (( rc == 0 )); then
+    _pager_text "yaml > ${resource}/${name}" "$output"
+  else
+    _pager_text "yaml error > ${resource}/${name}" "$output"
+  fi
+}
+
 # ── Detail / describe view ─────────────────────────────────
 # Blocks until the user presses q/Esc, so the main loop never sees
 # stray keypresses from inside the describe view (fixes auto-select).
@@ -3265,8 +3303,9 @@ _show_detail() {
     # Key bar — show only relevant actions for resource type
     _at 2 1
     if [[ "$resource" == "pods" || "$resource" == "pod" ]]; then
-      printf '%b%b[Esc]%b back  %b[↑↓/j/k]%b scroll  %b[g]%b top  %b[G]%b bottom  %b[l]%b logs  %b[e]%b exec  %b[r]%b restart%b' \
+      printf '%b%b[Esc]%b back  %b[↑↓/j/k]%b scroll  %b[g]%b top  %b[G]%b bottom  %b[l]%b logs  %b[e]%b exec  %b[y]%b yaml  %b[r]%b restart%b' \
         "$BG_BAR" \
+        "$C_CYAN" "$C_RESET$BG_BAR" \
         "$C_CYAN" "$C_RESET$BG_BAR" \
         "$C_CYAN" "$C_RESET$BG_BAR" \
         "$C_CYAN" "$C_RESET$BG_BAR" \
@@ -3276,8 +3315,9 @@ _show_detail() {
         "$C_CYAN" "$C_RESET$BG_BAR" \
         "$C_RESET"
     elif [[ "$resource" == "deployment" ]]; then
-      printf '%b%b[Esc]%b back  %b[↑↓/j/k]%b scroll  %b[g]%b top  %b[G]%b bottom  %b[r]%b restart%b' \
+      printf '%b%b[Esc]%b back  %b[↑↓/j/k]%b scroll  %b[g]%b top  %b[G]%b bottom  %b[y]%b yaml  %b[r]%b restart%b' \
         "$BG_BAR" \
+        "$C_CYAN" "$C_RESET$BG_BAR" \
         "$C_CYAN" "$C_RESET$BG_BAR" \
         "$C_CYAN" "$C_RESET$BG_BAR" \
         "$C_CYAN" "$C_RESET$BG_BAR" \
@@ -3285,8 +3325,9 @@ _show_detail() {
         "$C_CYAN" "$C_RESET$BG_BAR" \
         "$C_RESET"
     else
-      printf '%b%b[Esc]%b back  %b[↑↓/j/k]%b scroll  %b[g]%b top  %b[G]%b bottom%b' \
+      printf '%b%b[Esc]%b back  %b[↑↓/j/k]%b scroll  %b[g]%b top  %b[G]%b bottom  %b[y]%b yaml%b' \
         "$BG_BAR" \
+        "$C_CYAN" "$C_RESET$BG_BAR" \
         "$C_CYAN" "$C_RESET$BG_BAR" \
         "$C_CYAN" "$C_RESET$BG_BAR" \
         "$C_CYAN" "$C_RESET$BG_BAR" \
@@ -3415,6 +3456,10 @@ _show_detail() {
           _exec_shell "$name" "$ns"
           _render_detail
         fi
+        ;;
+      y|Y)
+        _show_resource_yaml "$resource" "$name" "$ns"
+        _render_detail
         ;;
       r)
         if [[ "$resource" == "deployment" ]]; then
@@ -3897,6 +3942,7 @@ _show_help() {
     "r                       Rolling restart (deployments)"
     "D                       Delete resource"
     "d                       Describe selected resource"
+    "y                       View selected resource YAML"
     ""
     "## Actions (Other views)"
     "s                       ArgoCD: sync selected app (else: shortcut to Secrets)"
@@ -4814,6 +4860,73 @@ _main_loop() {
         DETAIL_MODE=true
         _show_detail "$res" "$desc_name" "$desc_ns"
         DETAIL_MODE=false
+        LAST_REFRESH=0
+        _clear
+        ;;
+
+      # ── YAML ──────────────────────────────────────────────
+      y|Y)
+        local line; line=$(_selected_line) || continue
+        local res="pods"
+        local yaml_name yaml_ns
+
+        if [[ "$CURRENT_VIEW" == "events" ]]; then
+          _pager_text "yaml unavailable" "YAML view is not available for Events rows. Select a Kubernetes resource view."
+          LAST_REFRESH=0
+          _clear
+          continue
+        fi
+
+        if [[ "$CURRENT_VIEW" == "helm" ]]; then
+          IFS=$'\t' read -r helm_name helm_ns _ _ _ _ <<< "$line"
+          local helm_yaml
+          helm_yaml=$(helm get manifest "$helm_name" -n "$helm_ns" 2>&1)
+          _pager_text "yaml > helm/${helm_name}" "$helm_yaml"
+          LAST_REFRESH=0
+          _clear
+          continue
+        fi
+
+        if [[ "$CURRENT_VIEW" == "all" ]]; then
+          IFS=$'\t' read -r _ yaml_ns yaml_name _ _ yaml_res <<< "$line"
+          res="$yaml_res"
+        elif [[ "$CURRENT_VIEW" == "nodes" ]]; then
+          IFS=$'\t' read -r yaml_name _ <<< "$line"
+          yaml_ns="default"
+          res="node"
+        elif [[ "$CURRENT_VIEW" == "namespaces" ]]; then
+          IFS=$'\t' read -r yaml_name _ <<< "$line"
+          yaml_ns="default"
+          res="namespace"
+        elif [[ "$CURRENT_VIEW" == "argocd" ]]; then
+          IFS=$'\t' read -r yaml_ns yaml_name _ <<< "$line"
+          res="application.argoproj.io"
+        elif [[ "$CURRENT_VIEW" == "deploys" ]]; then
+          IFS=$'\t' read -r yaml_ns yaml_name _ <<< "$line"
+          res="deployment"
+        else
+          IFS=$'\t' read -r yaml_ns yaml_name _ <<< "$line"
+          [[ "$CURRENT_VIEW" == "certs"      ]] && res="certificate.cert-manager.io"
+          [[ "$CURRENT_VIEW" == "secrets"    ]] && res="secret"
+          [[ "$CURRENT_VIEW" == "services"   ]] && res="service"
+          [[ "$CURRENT_VIEW" == "configmaps" ]] && res="configmap"
+          [[ "$CURRENT_VIEW" == "pvcs"       ]] && res="persistentvolumeclaim"
+          [[ "$CURRENT_VIEW" == "ingresses"  ]] && res="ingress"
+          [[ "$CURRENT_VIEW" == "jobs"       ]] && res="job"
+          [[ "$CURRENT_VIEW" == "cronjobs"   ]] && res="cronjob"
+          [[ "$CURRENT_VIEW" == "hpa"        ]] && res="horizontalpodautoscaler"
+          if [[ "$CURRENT_VIEW" == "generic" ]]; then
+            if [[ "$CURRENT_NS" == "all" ]]; then
+              read -r yaml_ns yaml_name _ <<< "$line"
+            else
+              read -r yaml_name _ <<< "$line"
+              yaml_ns="$CURRENT_NS"
+            fi
+            res="$GENERIC_RESOURCE"
+          fi
+        fi
+
+        _show_resource_yaml "$res" "$yaml_name" "$yaml_ns"
         LAST_REFRESH=0
         _clear
         ;;
