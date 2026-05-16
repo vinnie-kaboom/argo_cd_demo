@@ -1,8 +1,14 @@
 name: GitOps - Promote my-app Image Tag
 
-# This repo is the GitOps repo.
-# It receives image publication events and updates environment-specific values.
-# Manual workflow_dispatch is available for controlled promotions and rollbacks.
+# Purpose:
+# - Update the image tag in this GitOps repo for one environment (dev/staging/prod).
+# - Commit that change so Argo CD can detect it and deploy the new version.
+#
+# Important:
+# - This workflow does NOT build or push images to DockerHub.
+# - The tag comes from:
+#   1) repository_dispatch payload (usually sent by a build/publish pipeline after push to DockerHub), or
+#   2) manual workflow_dispatch input.
 on:
   repository_dispatch:
     types:
@@ -28,7 +34,7 @@ env:
 
 jobs:
   update-image-tag:
-    name: Update image tag in git
+    name: Update image tag in GitOps values file
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -47,12 +53,14 @@ jobs:
           INPUT_TAG: ${{ inputs.image_tag }}
           INPUT_ENV: ${{ inputs.target_env }}
         run: |
+          # Prefer dispatch payload (automation), fallback to manual input.
           TAG="${DISPATCH_TAG:-$INPUT_TAG}"
           if [[ -z "$TAG" ]]; then
             echo "image_tag is required via repository_dispatch.client_payload.image_tag or workflow_dispatch input"
             exit 1
           fi
 
+          # Resolve environment and validate allowed values.
           TARGET_ENV="${DISPATCH_ENV:-$INPUT_ENV}"
           TARGET_ENV="${TARGET_ENV:-dev}"
           case "$TARGET_ENV" in
@@ -63,6 +71,7 @@ jobs:
               ;;
           esac
 
+              # Build the exact values file path that will be edited.
           VALUES_FILE="${{ env.VALUES_ROOT }}/${TARGET_ENV}/values.yaml"
 
           echo "image_tag=$TAG" >> "$GITHUB_OUTPUT"
@@ -75,6 +84,7 @@ jobs:
           TARGET_ENV: ${{ steps.vars.outputs.target_env }}
           VALUES_FILE: ${{ steps.vars.outputs.values_file }}
         run: |
+          # Replace only the Helm image.tag line in the selected environment values file.
           sed -i "s|^  tag:.*|  tag: \"${NEW_TAG}\"|" "${VALUES_FILE}"
           echo "Updated ${VALUES_FILE} -> tag: ${NEW_TAG} (env=${TARGET_ENV})"
 
@@ -84,9 +94,12 @@ jobs:
           TARGET_ENV: ${{ steps.vars.outputs.target_env }}
           VALUES_FILE: ${{ steps.vars.outputs.values_file }}
         run: |
+          # Commit only if the file actually changed.
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add "${VALUES_FILE}"
           git diff --cached --quiet && echo "No changes to commit" && exit 0
+
+          # This push is the GitOps trigger: Argo CD sees new Git commit and syncs cluster state.
           git commit -m "gitops: promote my-app ${TARGET_ENV} image to ${NEW_TAG} [skip ci]"
           git push

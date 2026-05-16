@@ -7,6 +7,34 @@
 - Root app (App of Apps): [apps/README.md](apps/README.md)
 - Agent Ops remediation pipeline: [apps/ops/agent-ops/README.md](apps/ops/agent-ops/README.md)
 
+## CI Tag Promotion Flow (Simple)
+
+This is the simple end-to-end flow for `.github/workflows/ci.yaml`:
+
+1. A separate app pipeline builds an image and pushes it to DockerHub.
+2. After push, that pipeline sends `repository_dispatch` to this repo with:
+  - `image_tag` (example: `v1.2.3`)
+  - `target_env` (`dev`, `staging`, or `prod`)
+3. This workflow can also be run manually with the same inputs.
+4. The workflow updates one file in this repo:
+  - `apps/app/my-app/deploy/overlays/<env>/values.yaml`
+5. It commits and pushes the change.
+
+What DockerHub does here:
+
+- DockerHub stores the image.
+- This workflow does not call DockerHub APIs directly.
+- It trusts the tag provided by the event/manual input.
+
+How Argo CD deploys the new version:
+
+1. Argo CD watches this GitOps repo.
+2. It sees the new commit with the updated image tag.
+3. It syncs the target Application and applies the new manifests.
+4. Kubernetes pulls the new image tag from DockerHub and rolls out the update.
+
+In short: build pipeline pushes image -> CI updates Git tag -> Argo CD syncs -> cluster runs new version.
+
 A 4-node Kubernetes cluster (2 control-plane + 2 workers) with ArgoCD and Claude Code CLI
 — fully in the cloud, no local Docker or admin rights needed. Works on Windows, Mac and iPad.
 
