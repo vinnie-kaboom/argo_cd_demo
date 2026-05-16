@@ -1,5 +1,12 @@
 name: my-app - build, push, and dispatch
 
+# About repository_dispatch and my-app-image-published:
+# - After building and pushing a new Docker image, this workflow sends a repository_dispatch event to the GitOps repo (argo_cd_demo).
+# - The event type is my-app-image-published.
+# - The event payload includes the new image tag and the target environment (dev, staging, or prod).
+# - This event tells the GitOps repo to update its image tag and trigger deployment via Argo CD.
+
+
 on:
   push:
     branches: [main]
@@ -9,6 +16,15 @@ on:
       - Dockerfile
       - .github/workflows/**
   workflow_dispatch:
+      # Purpose:
+      # - Build the my-app Docker image from source.
+      # - Push the image to DockerHub.
+      # - Notify the GitOps repo (argo_cd_demo) with the new image tag and environment so it can update and trigger deployment via Argo CD.
+
+      # How it works:
+      # - Runs on every push to main (if app code, helm, or Dockerfile changes), or can be run manually.
+      # - Builds and pushes the image to DockerHub.
+      # - Sends a repository_dispatch event to the GitOps repo with the new tag and environment.
     inputs:
       target_env:
         description: "Environment to update in GitOps repo"

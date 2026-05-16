@@ -1,5 +1,12 @@
 name: GitOps - Promote my-app Image Tag
 
+# About repository_dispatch and my-app-image-published:
+# - This workflow is triggered by a repository_dispatch event with type my-app-image-published.
+# - The event is sent from the my-app repo (or any other workflow/script) when a new Docker image is built and pushed.
+# - The event payload includes the new image tag and the target environment (dev, staging, or prod).
+# - When this event is received, this workflow updates the image tag in the correct values.yaml file so Argo CD can deploy the new version.
+
+
 # Purpose:
 # - Update the image tag in this GitOps repo for one environment (dev/staging/prod).
 # - Commit that change so Argo CD can detect it and deploy the new version.
