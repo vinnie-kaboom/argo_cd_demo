@@ -1,6 +1,6 @@
 image:
   repository: vincentzamora123/my-app
-  tag: "latest"
+  tag: "259388c"
   pullPolicy: IfNotPresent
   pullSecrets: []
 
