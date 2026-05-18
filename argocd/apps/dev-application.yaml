@@ -13,7 +13,7 @@ spec:
       path: helm
       helm:
         valueFiles:
-          - helm/overlays/dev/values.yaml
+          - helm/values.yaml
     - repoURL: https://github.com/vinnie-kaboom/my-app.git
       targetRevision: HEAD
       path: apps/app/my-app/external-secrets/dev
