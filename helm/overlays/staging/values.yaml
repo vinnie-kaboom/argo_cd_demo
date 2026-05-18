@@ -1,28 +1,2 @@
-# SRE-controlled values for STAGING environment
-image:
-  repository: vincentzamora123/my-app
-  tag: "staging-latest"
-  pullPolicy: IfNotPresent
-  pullSecrets: []
-
-replicaCount: 3
-
-config:
-  PORT: "8080"
-  LOG_LEVEL: info
-  ENVIRONMENT: staging
-  APP_COLOR: blue
-  DEMO_BANNER: STAGING PIPELINE
-
-secret:
-  create: false
-
-canary:
-  steps:
-    - setWeight: 50
-    - pause:
-        duration: 1m
-    - setWeight: 100
-
 pdb:
-  enabled: true
+

@@ -1,0 +1,2 @@
+# This file ensures the overlays directory exists for dev values only.
+# Do not add staging/prod overlays here. SRE controls those in argo_cd_demo.
