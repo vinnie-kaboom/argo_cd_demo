@@ -1,0 +1,28 @@
+# Developer-controlled values for DEV environment
+image:
+  repository: vincentzamora123/my-app
+  tag: "dev-latest"
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+
+replicaCount: 2
+
+config:
+  PORT: "8080"
+  LOG_LEVEL: debug
+  ENVIRONMENT: dev
+  APP_COLOR: springgreen
+  DEMO_BANNER: DEV PIPELINE - CHANGE ME
+
+secret:
+  create: false
+
+canary:
+  steps:
+    - setWeight: 50
+    - pause:
+        duration: 30s
+    - setWeight: 100
+
+pdb:
+  enabled: false

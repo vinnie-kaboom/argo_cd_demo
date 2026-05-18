@@ -13,7 +13,7 @@ spec:
       path: helm
       helm:
         valueFiles:
-          - $values/apps/app/my-app/deploy/overlays/staging/values.yaml
+          - overlays/staging/values.yaml
     - repoURL: https://github.com/vinnie-kaboom/argo_cd_demo.git
       targetRevision: HEAD
       ref: values

@@ -1,0 +1,31 @@
+# SRE-controlled values for PROD environment
+image:
+  repository: vincentzamora123/my-app
+  tag: "prod-latest"
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+
+replicaCount: 5
+
+config:
+  PORT: "8080"
+  LOG_LEVEL: warning
+  ENVIRONMENT: prod
+  APP_COLOR: gold
+  DEMO_BANNER: PRODUCTION PIPELINE
+
+secret:
+  create: false
+
+canary:
+  steps:
+    - setWeight: 10
+    - pause:
+        duration: 2m
+    - setWeight: 50
+    - pause:
+        duration: 2m
+    - setWeight: 100
+
+pdb:
+  enabled: true
