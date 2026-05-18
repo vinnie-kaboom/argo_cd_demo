@@ -13,11 +13,8 @@ spec:
       path: helm
       helm:
         valueFiles:
-          - $values/apps/app/my-app/deploy/overlays/dev/values.yaml
-    - repoURL: https://github.com/vinnie-kaboom/argo_cd_demo.git
-      targetRevision: HEAD
-      ref: values
-    - repoURL: https://github.com/vinnie-kaboom/argo_cd_demo.git
+          - apps/app/my-app/deploy/overlays/dev/values.yaml
+    - repoURL: https://github.com/vinnie-kaboom/my-app.git
       targetRevision: HEAD
       path: apps/app/my-app/external-secrets/dev
   destination:
