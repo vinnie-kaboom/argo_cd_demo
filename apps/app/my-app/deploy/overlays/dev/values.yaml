@@ -1,6 +1,6 @@
 image:
   repository: vincentzamora123/my-app
-  tag: "f407f3c"
+  tag: "8c855c7"
   pullPolicy: IfNotPresent
   pullSecrets: []
 
