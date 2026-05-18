@@ -7,19 +7,10 @@ metadata:
     - resources-finalizer.argocd.argoproj.io
 spec:
   project: default
-  sources:
-    - repoURL: https://github.com/vinnie-kaboom/my-app.git
-      targetRevision: HEAD
-      path: helm
-      helm:
-        valueFiles:
-          - helm/values.yaml
-    - repoURL: https://github.com/vinnie-kaboom/argo_cd_demo.git
-      targetRevision: HEAD
-      ref: values
-    - repoURL: https://github.com/vinnie-kaboom/argo_cd_demo.git
-      targetRevision: HEAD
-      path: apps/app/my-app/external-secrets/prod
+  source:
+    repoURL: https://github.com/vinnie-kaboom/argo_cd_demo.git
+    targetRevision: HEAD
+    path: apps/app/my-app/deploy/overlays/prod
   destination:
     server: https://kubernetes.default.svc
     namespace: my-app
