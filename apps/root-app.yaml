@@ -1,8 +1,11 @@
 ---
-# App of Apps – the single root Application you apply once to bootstrap
-# the entire platform. ArgoCD manages itself from this point forward.
+---
+# This is the "App of Apps" pattern for ArgoCD.
 #
-# Apply with:
+# Apply this manifest ONCE to bootstrap your whole platform.
+# ArgoCD will then manage itself and all child apps from this repo.
+#
+# Usage:
 #   kubectl apply -f apps/root-app.yaml
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -14,22 +17,26 @@ metadata:
 spec:
   project: default
 
+  # Where to find the manifests (your Git repo)
   source:
     repoURL: https://github.com/vinnie-kaboom/argo_cd_demo.git
     targetRevision: HEAD
-    # ArgoCD will find every Application manifest under argocd/ and sync them
+    # Look for manifests under the argocd/ folder
     path: argocd
     directory:
-      recurse: true          # walk subdirectories
-      include: "*.yaml"  # pick up app and infra Application manifests
+      recurse: true          # Search all subfolders
+      include: "*.yaml"      # Include all YAML qfiles (apps, infra, etc)
 
+  # Where to deploy the resources (the cluster and namespace)
   destination:
     server: https://kubernetes.default.svc
     namespace: argocd
 
+  # How ArgoCD should sync and manage resources
   syncPolicy:
     automated:
-      prune: true
-      selfHeal: true
+      prune: true            # Remove resources not in Git
+      selfHeal: true         # Fix drift automatically
     syncOptions:
-      - CreateNamespace=true
+      - CreateNamespace=true # Create namespaces if missing
+qq

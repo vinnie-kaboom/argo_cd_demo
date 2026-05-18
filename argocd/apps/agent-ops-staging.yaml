@@ -1,3 +1,8 @@
+---
+# Deploys Agent Ops for the STAGING environment.
+#
+# Agent Ops listens for alerts or webhooks in staging, records events, and can auto-fix or trigger GitHub PRs for remediation.
+# All resources are deployed to the agent-ops-staging namespace.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
