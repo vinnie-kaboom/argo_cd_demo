@@ -1,4 +1,4 @@
----
+
 ---
 # This is the "App of Apps" pattern for ArgoCD.
 #
@@ -39,4 +39,3 @@ spec:
       selfHeal: true         # Fix drift automatically
     syncOptions:
       - CreateNamespace=true # Create namespaces if missing
-qq
