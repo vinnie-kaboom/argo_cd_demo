@@ -59,13 +59,6 @@ configMapGenerator:
       - ENVIRONMENT=dev
       - LOG_LEVEL=debug             # verbose logging in dev
 
-# ─── Override Secret for dev environment ──────────────────────────────────
-secretGenerator:
-  - name: my-app-secrets
-    behavior: merge
-    literals:
-      - DATABASE_URL=postgres://localhost:5432/my-app-dev
-      - API_KEY=dev-key-12345
 
 # ─── Labels specific to dev ────────────────────────────────────────────────
 commonLabels:
