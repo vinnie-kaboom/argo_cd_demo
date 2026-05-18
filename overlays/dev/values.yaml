@@ -1,9 +1,0 @@
-# Developer overlay for DEV environment
-# Add or override values here for local or shared dev testing.
-
-image:
-  tag: "dev-latest"
-
-config:
-  LOG_LEVEL: debug
-  DEMO_BANNER: DEV PIPELINE - CHANGE ME
