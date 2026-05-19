@@ -13,7 +13,7 @@ namespace: my-app-staging
 images:
   - name: my-app
     newName: docker.io/vincentzamora123/my-app
-    newTag: "REPLACE_ME"
+    newTag: "9d0b232"
 
 # ─── Patch replicas for staging (moderate) ────────────────────────────────
 patchesStrategicMerge:
