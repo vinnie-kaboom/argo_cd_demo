@@ -7,7 +7,14 @@ resources:
   - pdb.yaml
   - namespace.yaml
 
+
 namespace: my-app
+
+# Explicit image/tag for prod promotion
+images:
+  - name: my-app
+    newName: docker.io/vincentzamora123/my-app
+    newTag: "REPLACE_ME"
 
 # ─── Patch replicas for prod (full HA) ────────────────────────────────────
 patchesStrategicMerge:

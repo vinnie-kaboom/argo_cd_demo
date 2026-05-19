@@ -78,33 +78,33 @@ jobs:
               ;;
           esac
 
-              # Build the exact values file path that will be edited.
-          VALUES_FILE="${{ env.VALUES_ROOT }}/${TARGET_ENV}/values.yaml"
+              # Build the exact kustomization.yaml file path that will be edited.
+              KUSTOMIZATION_FILE="${{ env.VALUES_ROOT }}/${TARGET_ENV}/kustomization.yaml"
 
-          echo "image_tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "target_env=$TARGET_ENV" >> "$GITHUB_OUTPUT"
-          echo "values_file=$VALUES_FILE" >> "$GITHUB_OUTPUT"
+              echo "image_tag=$TAG" >> "$GITHUB_OUTPUT"
+              echo "target_env=$TARGET_ENV" >> "$GITHUB_OUTPUT"
+              echo "kustomization_file=$KUSTOMIZATION_FILE" >> "$GITHUB_OUTPUT"
 
       - name: Update selected environment image tag
         env:
           NEW_TAG: ${{ steps.vars.outputs.image_tag }}
           TARGET_ENV: ${{ steps.vars.outputs.target_env }}
-          VALUES_FILE: ${{ steps.vars.outputs.values_file }}
+          KUSTOMIZATION_FILE: ${{ steps.vars.outputs.kustomization_file }}
         run: |
-          # Replace only the Helm image.tag line in the selected environment values file.
-          sed -i "s|^  tag:.*|  tag: \"${NEW_TAG}\"|" "${VALUES_FILE}"
-          echo "Updated ${VALUES_FILE} -> tag: ${NEW_TAG} (env=${TARGET_ENV})"
+          # Replace the image tag in the kustomization.yaml for the selected environment.
+          sed -i "/newName: docker.io\/vincentzamora123\/my-app/ {n; s/newTag: .*/newTag: \"${NEW_TAG}\"/}" "${KUSTOMIZATION_FILE}"
+          echo "Updated ${KUSTOMIZATION_FILE} -> newTag: ${NEW_TAG} (env=${TARGET_ENV})"
 
       - name: Commit and push
         env:
           NEW_TAG: ${{ steps.vars.outputs.image_tag }}
           TARGET_ENV: ${{ steps.vars.outputs.target_env }}
-          VALUES_FILE: ${{ steps.vars.outputs.values_file }}
+          KUSTOMIZATION_FILE: ${{ steps.vars.outputs.kustomization_file }}
         run: |
           # Commit only if the file actually changed.
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add "${VALUES_FILE}"
+          git add "${KUSTOMIZATION_FILE}"
           git diff --cached --quiet && echo "No changes to commit" && exit 0
 
           # This push is the GitOps trigger: Argo CD sees new Git commit and syncs cluster state.
