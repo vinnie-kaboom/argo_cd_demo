@@ -9,7 +9,7 @@ resources:
 namespace: my-app-dev
 images:
   - name: my-app
-    newName: my-app
+    newName: docker.io/your-dockerhub-username/my-app
     # The tag below should be set by automation (e.g., CI/CD or repository dispatch)
     # After dev is validated, this tag can be promoted to staging/prod overlays
-    newTag: "c7459c0"
+    newTag: "9d0b232"
