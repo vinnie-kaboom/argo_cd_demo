@@ -19,6 +19,7 @@ spec:
           image: my-app:9d0b232
           ports:
             - containerPort: 80
+              protocol: TCP
   strategy:
     canary:
       steps:
