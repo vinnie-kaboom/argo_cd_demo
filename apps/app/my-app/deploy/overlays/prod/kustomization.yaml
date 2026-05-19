@@ -1,12 +1,10 @@
-# Production overlay – conservative, fully tested
+# Production overlay – now matches staging
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
   - ../../base
-  - pdb.yaml
   - namespace.yaml
-
 
 namespace: my-app
 
@@ -16,7 +14,7 @@ images:
     newName: docker.io/vincentzamora123/my-app
     newTag: "9d0b232"
 
-# ─── Patch replicas for prod (full HA) ────────────────────────────────────
+# ─── Patch replicas for prod (match staging) ─────────────────────────────
 patchesStrategicMerge:
   - |-
     apiVersion: argoproj.io/v1alpha1
@@ -24,28 +22,9 @@ patchesStrategicMerge:
     metadata:
       name: my-app
     spec:
-      replicas: 5    # keep base default for prod
+      replicas: 3
 
-# ─── Patch container resources for prod (optimized) ───────────────────────
-  - |-
-    apiVersion: argoproj.io/v1alpha1
-    kind: Rollout
-    metadata:
-      name: my-app
-    spec:
-      template:
-        spec:
-          containers:
-            - name: my-app
-              resources:
-                requests:
-                  cpu: 100m
-                  memory: 128Mi    # higher baseline for reliable performance
-                limits:
-                  cpu: 500m
-                  memory: 256Mi
-
-# ─── Patch canary steps for prod (cautious promotion) ─────────────────────
+# ─── Patch canary steps for prod (match staging) ────────────────────────
   - |-
     apiVersion: argoproj.io/v1alpha1
     kind: Rollout
@@ -55,39 +34,26 @@ patchesStrategicMerge:
       strategy:
         canary:
           steps:
-            - setWeight: 5        # tiny 5% canary in prod
-            - pause: {}           # manual gate
-            - setWeight: 25
+            - setWeight: 10
+            - pause: {}
+            - setWeight: 30
             - pause:
-                duration: 3m      # long bake in prod
-            - setWeight: 50
+                duration: 1m
+            - setWeight: 60
             - pause:
-                duration: 5m      # extra validation
-            - setWeight: 100
+                duration: 1m
 
-# ─── Override ConfigMap for prod ──────────────────────────────────────────
+# ─── Override ConfigMap for prod (match staging) ────────────────────────
 configMapGenerator:
   - name: my-app-config
     behavior: merge
     literals:
       - ENVIRONMENT=prod
-      - LOG_LEVEL=error             # minimal logging in prod (performance)
+      - LOG_LEVEL=error
 
-# ─── Override Secret for prod ────────────────────────────────────────────
-# In real production, use sealed-secrets or external-secrets,
-# NOT literals in Kustomize. This is just for demonstration.
+# ─── Override Secret for prod (match staging) ───────────────────────────
 secretGenerator:
   - name: my-app-secrets
     behavior: merge
     literals:
       - DATABASE_URL=postgres://prod-db.internal:5432/my-app-prod
-      - API_KEY=prod-key-xxxxx      # use actual secret management in production
-
-# ─── Labels specific to prod ──────────────────────────────────────────────
-commonLabels:
-  environment: prod
-
-# ─── Annotations specific to prod ────────────────────────────────────────
-commonAnnotations:
-  deployment-environment: production
-  sla-tier: critical
