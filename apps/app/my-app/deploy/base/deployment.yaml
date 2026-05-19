@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
         - name: my-app
-          image: my-app:9d0b232
+          image: docker.io/vincentzamora123/my-app:9d0b232
           ports:
             - containerPort: 80
               protocol: TCP
