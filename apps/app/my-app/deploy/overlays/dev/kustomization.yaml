@@ -9,7 +9,8 @@ resources:
 namespace: my-app-dev
 images:
   - name: my-app
-    newName: docker.io/your-dockerhub-username/my-app
+    # The username below should be replaced by CI/CD automation using the DOCKERHUB_USERNAME secret
+    newName: docker.io/$(DOCKERHUB_USERNAME)/my-app
     # The tag below should be set by automation (e.g., CI/CD or repository dispatch)
     # After dev is validated, this tag can be promoted to staging/prod overlays
     newTag: "9d0b232"
