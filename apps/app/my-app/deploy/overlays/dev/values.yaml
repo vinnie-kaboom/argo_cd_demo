@@ -2,7 +2,7 @@
 # Add or override values here for local or shared dev testing.
 
 image:
-  tag: "5687d17"
+  tag: "fbc3170"
 
 config:
   LOG_LEVEL: debug
