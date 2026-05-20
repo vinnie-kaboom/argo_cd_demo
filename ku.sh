@@ -21,6 +21,7 @@
 #    f                   Failures only toggle (All view)
 #    m                   Toggle more kinds (All view)
 #    s                   ArgoCD sync (in ArgoCD view)
+#    R                   Rollouts view (Argo Rollouts)
 #    n                   Switch namespace
 #    C                   Switch context
 #    w                   Toggle watch mode
@@ -69,7 +70,7 @@ SEL_RST=$'\e[39m'
 # ── State ──────────────────────────────────────────────────
 CURRENT_NS="default"
 CURRENT_CTX=""
-CURRENT_VIEW="pods"     # pods | deploys | nodes | events | argocd | certs | all | generic
+CURRENT_VIEW="pods"     # pods | deploys | nodes | events | argocd | certs | rollouts | all | generic
 GENERIC_RESOURCE=""    # set when CURRENT_VIEW=generic, e.g. "applications"
 SELECTED_IDX=0
 SCROLL_OFFSET=0         # first visible row in current view
@@ -87,10 +88,65 @@ ALL_FAIL_ONLY=false      # show only failed/problem rows when true
 declare -A VIEW_LOADED=()
 
 # View index for header tabs
-declare -A VIEW_IDX=([pods]=1 [deploys]=2 [nodes]=3 [events]=4 [argocd]=5 [certs]=6)
+declare -A VIEW_IDX=([pods]=1 [deploys]=2 [nodes]=3 [events]=4 [argocd]=5 [certs]=6 [rollouts]=7)
 
-ALL_KIND_FILTER_ORDER=("all" "pods" "applications" "deploys" "statefulsets" "daemonsets" "replicasets" "jobs" "cronjobs")
+ALL_KIND_FILTER_ORDER=("all" "pods" "applications" "deploys" "rollouts" "statefulsets" "daemonsets" "replicasets" "jobs" "cronjobs")
+_fetch_rollouts() {
+  local ns_flag
+  [[ "$CURRENT_NS" == "all" ]] && ns_flag="-A" || ns_flag="-n $CURRENT_NS"
+  mapfile -t DATA_LINES < <(
+    kubectl get rollouts.argoproj.io $ns_flag --no-headers \
+      -o custom-columns='NAMESPACE:.metadata.namespace,NAME:.metadata.name,READY:.status.readyReplicas,DESIRED:.spec.replicas,STRATEGY:.spec.strategy.type,AGE:.metadata.creationTimestamp' 2>/dev/null \
+    | awk '{printf "%s\t%s\t%s\t%s\t%s\t%s\n",$1,$2,$3,$4,$5,$6}'
+  )
+}
+_fetch_data() {
+  case "$CURRENT_VIEW" in
+    all)        _fetch_all        ;;
+    pods)       _fetch_pods       ;;
+    deploys)    _fetch_deploys    ;;
+    rollouts)   _fetch_rollouts   ;;
+    nodes)      _fetch_nodes      ;;
+    events)     _fetch_events     ;;
+    argocd)     _fetch_argocd     ;;
+    certs)      _fetch_certs      ;;
+    secrets)    _fetch_secrets    ;;
+    services)   _fetch_services   ;;
+    helm)       _fetch_helm       ;;
+    configmaps) _fetch_configmaps ;;
+    pvcs)       _fetch_pvcs       ;;
+    ingresses)  _fetch_ingresses  ;;
+    jobs)       _fetch_jobs       ;;
+    cronjobs)   _fetch_cronjobs   ;;
+    hpa)        _fetch_hpa        ;;
+    namespaces) _fetch_namespaces ;;
+    generic)    _fetch_generic    ;;
+  esac
+}
+# ── Rollouts view renderer ───────────────────────────────
+_render_rollouts() {
+  local start_row=4
+  TERM_COLS=$(tput cols 2>/dev/null || echo 120)
+  _draw_col_header $start_row "NAMESPACE" "NAME" "READY" "DESIRED" "STRATEGY" "AGE"
+  local row=$((start_row+1))
+  local i line ns name ready desired strategy age
+  for i in "${!DATA_LINES[@]}"; do
+    line="${DATA_LINES[$i]}"
+    IFS=$'\t' read -r ns name ready desired strategy age <<< "$line"
+    _at $((row+i)) 2
+    printf '%s  %s  %s  %s  %s  %s' "$ns" "$name" "$ready" "$desired" "$strategy" "$age"
+    _eol
+  done
+}
 
+render_view() {
+  case "$CURRENT_VIEW" in
+    rollouts)
+      _render_rollouts
+      ;;
+    # ...existing view renderers...
+  esac
+}
 # Store fetched data globally to avoid re-fetching on every keypress
 declare -a DATA_LINES=()
 DETAIL_MODE=false
@@ -226,6 +282,7 @@ _draw_tabs() {
     all)        view_label="All"         ;;
     pods)       view_label="Pods"        ;;
     deploys)    view_label="Deployments" ;;
+    rollouts)   view_label="Rollouts"    ;;
     nodes)      view_label="Nodes"       ;;
     events)     view_label="Events"      ;;
     argocd)     view_label="ArgoCD"      ;;
