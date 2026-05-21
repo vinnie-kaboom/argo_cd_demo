@@ -95,15 +95,15 @@ ALL_KIND_FILTER_ORDER=("all" "pods" "applications" "deploys" "rollouts" "statefu
 _fetch_rollouts() {
   local ns_flag
   [[ "$CURRENT_NS" == "all" ]] && ns_flag="-A" || ns_flag="-n $CURRENT_NS"
-  {
-    echo "[DEBUG] _fetch_rollouts: CURRENT_NS='$CURRENT_NS' ns_flag='$ns_flag'" >&2
+  echo "[DEBUG] _fetch_rollouts: CURRENT_NS='$CURRENT_NS' ns_flag='$ns_flag'" >&2
+  mapfile -t DATA_LINES < <(
     kubectl get rollouts.argoproj.io $ns_flag --no-headers \
-      -o custom-columns='NAMESPACE:.metadata.namespace,NAME:.metadata.name,DESIRED:.spec.replicas,CURRENT:.status.replicas,UP_TO_DATE:.status.updatedReplicas,AVAILABLE:.status.availableReplicas,AGE:.metadata.creationTimestamp' 2>&1 \
+      -o custom-columns='NAMESPACE:.metadata.namespace,NAME:.metadata.name,DESIRED:.spec.replicas,CURRENT:.status.replicas,UP_TO_DATE:.status.updatedReplicas,AVAILABLE:.status.availableReplicas,AGE:.metadata.creationTimestamp' 2>/dev/null \
     | awk '{
       ns=($1==""?"-":$1); name=($2==""?"-":$2); desired=($3==""?"-":$3); current=($4==""?"-":$4); uptodate=($5==""?"-":$5); available=($6==""?"-":$6); age=($7==""?"-":$7);
       printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", ns, name, desired, current, uptodate, available, age;
     }'
-  } | tee /dev/stderr | { mapfile -t DATA_LINES; }
+  )
   echo "[DEBUG] DATA_LINES count: ${#DATA_LINES[@]}" >&2
   for l in "${DATA_LINES[@]}"; do echo "[DEBUG] DATA_LINE: $l" >&2; done
 }
@@ -1595,6 +1595,7 @@ _refresh_data() {
     all)        _fetch_all        ;;
     pods)       _fetch_pods       ;;
     deploys)    _fetch_deploys    ;;
+    rollouts)   _fetch_rollouts   ;;
     nodes)      _fetch_nodes      ;;
     events)     _fetch_events     ;;
     argocd)     _fetch_argocd     ;;
