@@ -140,10 +140,17 @@ _render_rollouts() {
   for i in "${!DATA_LINES[@]}"; do
     line="${DATA_LINES[$i]}"
     IFS=$'\t' read -r ns name desired current uptodate available age <<< "$line"
-    _at $((row+i)) 2
-    printf '%s  %s  %s  %s  %s  %s  %s' "$ns" "$name" "$desired" "$current" "$uptodate" "$available" "$age"
+    _at $((row+i)) 1
+    # Debug marker and clear separators
+    printf '[ROW] | %s | %s | %s | %s | %s | %s | %s' "$ns" "$name" "$desired" "$current" "$uptodate" "$available" "$age"
     _eol
   done
+  # If no data, print a visible message
+  if (( ${#DATA_LINES[@]} == 0 )); then
+    _at $((start_row+3)) 1
+    printf '%bNo rollouts found%b' "$C_GRAY" "$C_RESET"
+    _eol
+  fi
 }
 
 render_view() {
