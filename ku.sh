@@ -22,6 +22,7 @@
 #    m                   Toggle more kinds (All view)
 #    s                   ArgoCD sync (in ArgoCD view)
 #    R                   Rollouts view (Argo Rollouts)
+#    ^                   Force refresh (Ctrl+^)
 #    n                   Switch namespace
 #    C                   Switch context
 #    w                   Toggle watch mode
@@ -94,11 +95,17 @@ ALL_KIND_FILTER_ORDER=("all" "pods" "applications" "deploys" "rollouts" "statefu
 _fetch_rollouts() {
   local ns_flag
   [[ "$CURRENT_NS" == "all" ]] && ns_flag="-A" || ns_flag="-n $CURRENT_NS"
-  mapfile -t DATA_LINES < <(
+  {
+    echo "[DEBUG] _fetch_rollouts: CURRENT_NS='$CURRENT_NS' ns_flag='$ns_flag'" >&2
     kubectl get rollouts.argoproj.io $ns_flag --no-headers \
-      -o custom-columns='NAMESPACE:.metadata.namespace,NAME:.metadata.name,READY:.status.readyReplicas,DESIRED:.spec.replicas,STRATEGY:.spec.strategy.type,AGE:.metadata.creationTimestamp' 2>/dev/null \
-    | awk '{printf "%s\t%s\t%s\t%s\t%s\t%s\n",$1,$2,$3,$4,$5,$6}'
-  )
+      -o custom-columns='NAMESPACE:.metadata.namespace,NAME:.metadata.name,DESIRED:.spec.replicas,CURRENT:.status.replicas,UP_TO_DATE:.status.updatedReplicas,AVAILABLE:.status.availableReplicas,AGE:.metadata.creationTimestamp' 2>&1 \
+    | awk '{
+      ns=($1==""?"-":$1); name=($2==""?"-":$2); desired=($3==""?"-":$3); current=($4==""?"-":$4); uptodate=($5==""?"-":$5); available=($6==""?"-":$6); age=($7==""?"-":$7);
+      printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", ns, name, desired, current, uptodate, available, age;
+    }'
+  } | tee /dev/stderr | { mapfile -t DATA_LINES; }
+  echo "[DEBUG] DATA_LINES count: ${#DATA_LINES[@]}" >&2
+  for l in "${DATA_LINES[@]}"; do echo "[DEBUG] DATA_LINE: $l" >&2; done
 }
 _fetch_data() {
   case "$CURRENT_VIEW" in
@@ -127,14 +134,14 @@ _fetch_data() {
 _render_rollouts() {
   local start_row=4
   TERM_COLS=$(tput cols 2>/dev/null || echo 120)
-  _draw_col_header $start_row "NAMESPACE" "NAME" "READY" "DESIRED" "STRATEGY" "AGE"
+  _draw_col_header $start_row "NAMESPACE" "NAME" "DESIRED" "CURRENT" "UP-TO-DATE" "AVAILABLE" "AGE"
   local row=$((start_row+1))
-  local i line ns name ready desired strategy age
+  local i line ns name desired current uptodate available age
   for i in "${!DATA_LINES[@]}"; do
     line="${DATA_LINES[$i]}"
-    IFS=$'\t' read -r ns name ready desired strategy age <<< "$line"
+    IFS=$'\t' read -r ns name desired current uptodate available age <<< "$line"
     _at $((row+i)) 2
-    printf '%s  %s  %s  %s  %s  %s' "$ns" "$name" "$ready" "$desired" "$strategy" "$age"
+    printf '%s  %s  %s  %s  %s  %s  %s' "$ns" "$name" "$desired" "$current" "$uptodate" "$available" "$age"
     _eol
   done
 }
@@ -429,16 +436,16 @@ _draw_statusbar() {
       fi
     else
       if [[ "$CURRENT_VIEW" == "all" ]]; then
-        printf '%b[Enter]%b describe  %b[f]%b failures  %b[K]%b workload  %b[m]%b more  %b[w]%b watch  %b[:]%b view  %b[/]%b filter  %b[n]%b ns  %b[C]%b ctx  %b[R]%b refresh  %b[?]%b help  %b[q]%b quit' \
-          "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$watch_color" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
+        printf '%b[Enter]%b describe  %b[f]%b failures  %b[K]%b workload  %b[m]%b more  %b[w]%b watch  %b[:]%b view  %b[/]%b filter  %b[n]%b ns  %b[C]%b ctx  %b[R]%b rollouts  %b[^]%b refresh  %b[?]%b help  %b[q]%b quit' \
+          "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$watch_color" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
       elif [[ "$CURRENT_VIEW" == "argocd" ]]; then
-        printf '%b[s]%b sync  %b[Enter]%b tree  %b[w]%b watch  %b[:]%b view  %b[/]%b filter  %b[n]%b ns  %b[C]%b ctx  %b[R]%b refresh  %b[?]%b help  %b[q]%b quit' \
+        printf '%b[s]%b sync  %b[Enter]%b tree  %b[w]%b watch  %b[:]%b view  %b[/]%b filter  %b[n]%b ns  %b[C]%b ctx  %b[R]%b rollouts  %b[^]%b refresh  %b[?]%b help  %b[q]%b quit' \
           "$k" "$r" "$k" "$r" "$watch_color" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
       elif [[ "$CURRENT_VIEW" == "pods" ]]; then
-        printf '%b[l]%b logs  %b[e]%b exec  %b[v]%b prev-logs  %b[t]%b top  %b[f]%b fwd  %b[r]%b restart  %b[D]%b delete  %b[w]%b watch  %b[:]%b view  %b[/]%b filter  %b[n]%b ns  %b[C]%b ctx  %b[R]%b refresh  %b[?]%b help  %b[q]%b quit' \
+        printf '%b[l]%b logs  %b[e]%b exec  %b[v]%b prev-logs  %b[t]%b top  %b[f]%b fwd  %b[r]%b restart  %b[D]%b delete  %b[w]%b watch  %b[:]%b view  %b[/]%b filter  %b[n]%b ns  %b[C]%b ctx  %b[R]%b rollouts  %b[^]%b refresh  %b[?]%b help  %b[q]%b quit' \
           "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$C_RED" "$r" "$watch_color" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
       elif [[ "$CURRENT_VIEW" == "secrets" ]]; then
-        printf '%b[x]%b decode  %b[w]%b watch  %b[:]%b view  %b[↑↓/j/k]%b nav  %b[Enter]%b describe  %b[/]%b filter  %b[n]%b ns  %b[C]%b ctx  %b[R]%b refresh  %b[?]%b help  %b[q]%b quit' \
+        printf '%b[x]%b decode  %b[w]%b watch  %b[:]%b view  %b[↑↓/j/k]%b nav  %b[Enter]%b describe  %b[/]%b filter  %b[n]%b ns  %b[C]%b ctx  %b[R]%b rollouts  %b[^]%b refresh  %b[?]%b help  %b[q]%b quit' \
           "$k" "$r" "$watch_color" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
       else
         printf '%b[w]%b watch  %b[:]%b view  %b[↑↓/j/k]%b nav  %b[Enter]%b describe  %b[/]%b filter  %b[n]%b ns  %b[C]%b ctx  %b[R]%b refresh  %b[?]%b help  %b[q]%b quit' \
@@ -1583,6 +1590,7 @@ _render_generic() {
 }
 
 _refresh_data() {
+  echo "[DEBUG] _refresh_data called: CURRENT_VIEW='$CURRENT_VIEW' CURRENT_NS='$CURRENT_NS'" >&2
   case "$CURRENT_VIEW" in
     all)        _fetch_all        ;;
     pods)       _fetch_pods       ;;
@@ -4048,7 +4056,7 @@ _show_help() {
     "## General"
     "w                       Toggle watch mode (auto-refresh every 5s)"
     "?                       This help screen"
-    "R                       Force refresh"
+    "^                       Force refresh (Ctrl+^)"
     "q / Ctrl-C              Quit / go back"
   )
 
@@ -4169,9 +4177,10 @@ _switch_view() {
   FILTER=""
   DETAIL_MODE=false
   WATCH_MODE=false   # reset watch mode — you were watching the previous view
-  # DATA_LINES is a shared buffer across views; always force a refresh
-  # when switching so the new renderer never sees stale rows.
+  # Always force a refresh when switching views so the new renderer never sees stale rows.
   LAST_REFRESH=0
+  # Also clear DATA_LINES to avoid stale selection from previous view
+  DATA_LINES=()
 }
 # Palette aliases → kubectl resource type (used for generic fetch)
 # The rich pre-built views are still on 1-9 keys
@@ -4601,6 +4610,7 @@ _render_view() {
   _draw_header
   _draw_tabs
 
+  echo "[DEBUG] _fetch_data called: CURRENT_VIEW='$CURRENT_VIEW' CURRENT_NS='$CURRENT_NS'" >&2
   case "$CURRENT_VIEW" in
     all)        _render_all        ;;
     pods)       _render_pods       ;;
@@ -5119,8 +5129,14 @@ _main_loop() {
           LAST_REFRESH=0   # immediate fetch when enabling
         fi
         ;;
-      # ── Force refresh ─────────────────────────────────────
+
+      # ── Rollouts view ─────────────────────────────────────
       R)
+        _switch_view "rollouts"
+        ;;
+
+      # ── Force refresh (Ctrl+^) ────────────────────────────
+      $'\x1e')
         # Invalidate cache for current view only
         unset "VIEW_LOADED[${CURRENT_VIEW}:${CURRENT_NS}]"
         LAST_REFRESH=0
