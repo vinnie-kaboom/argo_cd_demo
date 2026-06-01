@@ -19,8 +19,9 @@
 #    0                   Compact All-resources view
 #    K                   Cycle kind filter (All view)
 #    f                   Failures only toggle (All view)
-#    m                   Toggle more kinds (All view)
+#    m                   Toggle more kinds (All view) / expand event message
 #    s                   ArgoCD sync (in ArgoCD view)
+#    c / o               Copy / export detail text
 #    R                   Rollouts view (Argo Rollouts)
 #    ^                   Force refresh (Ctrl+^)
 #    n                   Switch namespace
@@ -81,6 +82,7 @@ REFRESH_INTERVAL=5      # seconds (used in watch mode)
 LOG_FOLLOW=false
 WATCH_MODE=false        # when true, auto-refreshes every REFRESH_INTERVAL seconds
 READONLY=false          # when true, blocks destructive actions (delete, restart, exec)
+ENHANCED_DETAIL_UI=true # single rollback point for detail/message UX additions
 ALL_KIND_FILTER="all"   # all | pods | applications | deploys | statefulsets | daemonsets | replicasets | jobs | cronjobs
 ALL_INCLUDE_MORE=false   # include services/configmaps/ingresses/pvcs when true
 ALL_FAIL_ONLY=false      # show only failed/problem rows when true
@@ -414,6 +416,9 @@ _draw_statusbar() {
       if [[ "$CURRENT_VIEW" == "all" ]]; then
         printf '%b[f]%b failures  %b[K]%b workload  %b[m]%b more  %b[/]%b filter  %b[:]%b view  %b[n]%b ns  %b[q]%b quit' \
           "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
+      elif [[ "$CURRENT_VIEW" == "events" && "$ENHANCED_DETAIL_UI" == true ]]; then
+        printf '%b[Enter]%b detail  %b[m]%b msg  %b[/]%b filter  %b[:]%b view  %b[q]%b quit' \
+          "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
       elif [[ "$CURRENT_VIEW" == "argocd" ]]; then
         printf '%b[s]%b sync  %b[Enter]%b tree  %b[/]%b filter  %b[:]%b view  %b[n]%b ns  %b[q]%b quit' \
           "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
@@ -428,6 +433,9 @@ _draw_statusbar() {
       if [[ "$CURRENT_VIEW" == "all" ]]; then
         printf '%b[Enter]%b describe  %b[f]%b failures  %b[K]%b workload  %b[m]%b more  %b[/]%b filter  %b[:]%b view  %b[n]%b ns  %b[q]%b quit' \
           "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
+      elif [[ "$CURRENT_VIEW" == "events" && "$ENHANCED_DETAIL_UI" == true ]]; then
+        printf '%b[Enter]%b detail  %b[m]%b msg  %b[w]%b watch  %b[/]%b filter  %b[:]%b view  %b[n]%b ns  %b[q]%b quit' \
+          "$k" "$r" "$k" "$r" "$watch_color" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
       elif [[ "$CURRENT_VIEW" == "argocd" ]]; then
         printf '%b[s]%b sync  %b[Enter]%b tree  %b[w]%b watch  %b[/]%b filter  %b[:]%b view  %b[n]%b ns  %b[q]%b quit' \
           "$k" "$r" "$k" "$r" "$watch_color" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
@@ -445,6 +453,9 @@ _draw_statusbar() {
       if [[ "$CURRENT_VIEW" == "all" ]]; then
         printf '%b[Enter]%b describe  %b[f]%b failures  %b[K]%b workload  %b[m]%b more  %b[w]%b watch  %b[:]%b view  %b[/]%b filter  %b[n]%b ns  %b[C]%b ctx  %b[R]%b rollouts  %b[^]%b refresh  %b[?]%b help  %b[q]%b quit' \
           "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$watch_color" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
+      elif [[ "$CURRENT_VIEW" == "events" && "$ENHANCED_DETAIL_UI" == true ]]; then
+        printf '%b[Enter]%b detail  %b[m]%b message  %b[w]%b watch  %b[:]%b view  %b[/]%b filter  %b[n]%b ns  %b[C]%b ctx  %b[^]%b refresh  %b[?]%b help  %b[q]%b quit' \
+          "$k" "$r" "$k" "$r" "$watch_color" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
       elif [[ "$CURRENT_VIEW" == "argocd" ]]; then
         printf '%b[s]%b sync  %b[Enter]%b tree  %b[w]%b watch  %b[:]%b view  %b[/]%b filter  %b[n]%b ns  %b[C]%b ctx  %b[R]%b rollouts  %b[^]%b refresh  %b[?]%b help  %b[q]%b quit' \
           "$k" "$r" "$k" "$r" "$watch_color" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r" "$k" "$r"
@@ -463,6 +474,112 @@ _draw_statusbar() {
 
   # Ensure rest of line is blank in case previous frame had longer text.
   _eol
+}
+
+_notice_footer() {
+  local msg="$1"
+  local color="${2:-$C_GRAY}"
+
+  TERM_ROWS=$(tput lines 2>/dev/null || echo 40)
+  TERM_COLS=$(tput cols  2>/dev/null || echo 120)
+  _at "$TERM_ROWS" 1
+  printf '%b%-*s%b' "$BG_BAR" "$TERM_COLS" "" "$C_RESET"
+  _at "$TERM_ROWS" 2
+  printf '%b%s%b' "$color" "$msg" "$C_RESET"
+  _eol
+  local _ack=""
+  IFS= read -rsn1 -t 1.2 _ack || true
+  _drain_input
+}
+
+_safe_slug() {
+  printf '%s' "$1" | tr -cs '[:alnum:]._' '-'
+}
+
+_copy_text() {
+  local text="$1"
+
+  if command -v wl-copy >/dev/null 2>&1; then
+    printf '%s' "$text" | wl-copy
+    return $?
+  fi
+  if command -v xclip >/dev/null 2>&1; then
+    printf '%s' "$text" | xclip -selection clipboard
+    return $?
+  fi
+  if command -v pbcopy >/dev/null 2>&1; then
+    printf '%s' "$text" | pbcopy
+    return $?
+  fi
+  if command -v base64 >/dev/null 2>&1; then
+    local encoded
+    encoded=$(printf '%s' "$text" | base64 | tr -d '\r\n')
+    printf '\033]52;c;%s\a' "$encoded"
+    return 0
+  fi
+  return 1
+}
+
+_export_text() {
+  local label="$1"
+  local text="$2"
+  local slug file
+
+  slug=$(_safe_slug "$label")
+  [[ -z "$slug" ]] && slug="detail"
+  file=$(mktemp "/tmp/kube-dash-${slug}-XXXX.txt") || return 1
+  printf '%s' "$text" > "$file" || return 1
+  printf '%s' "$file"
+}
+
+_event_full_message() {
+  local ev_ns="$1" ev_reason="$2" ev_obj="$3" fallback="$4"
+  local full_msg
+
+  full_msg=$(kubectl get events -n "$ev_ns" \
+    --field-selector "involvedObject.name=${ev_obj},reason=${ev_reason}" \
+    --sort-by='.lastTimestamp' \
+    -o jsonpath='{.items[-1].message}' 2>/dev/null)
+  [[ -z "$full_msg" ]] && full_msg="$fallback"
+  printf '%s' "$full_msg"
+}
+
+_build_event_detail() {
+  local ev_ns="$1" ev_last="$2" ev_type="$3" ev_reason="$4" ev_obj="$5" ev_msg="$6"
+  local full_msg
+  full_msg=$(_event_full_message "$ev_ns" "$ev_reason" "$ev_obj" "$ev_msg")
+
+  printf 'Namespace:  %s\n' "$ev_ns"
+  printf 'Last Seen:  %s\n' "$ev_last"
+  printf 'Type:       %s\n' "$ev_type"
+  printf 'Reason:     %s\n' "$ev_reason"
+  printf 'Object:     %s\n' "$ev_obj"
+  printf '%s\n' "$(printf '%0.s-' {1..60})"
+  printf 'Message:\n\n%s' "$full_msg"
+}
+
+_show_event_detail_from_line() {
+  local line="$1"
+  local ev_ns ev_last ev_type ev_reason ev_obj ev_msg ev_detail
+
+  IFS=$'\t' read -r ev_ns ev_last ev_type ev_reason ev_obj ev_msg <<< "$line"
+  ev_detail=$(_build_event_detail "$ev_ns" "$ev_last" "$ev_type" "$ev_reason" "$ev_obj" "$ev_msg")
+  _pager_text "event › ${ev_obj}" "$ev_detail" "[Esc]" "quit"
+}
+
+_show_event_message_from_line() {
+  local line="$1"
+  local ev_ns ev_last ev_type ev_reason ev_obj ev_msg full_msg pane
+
+  IFS=$'\t' read -r ev_ns ev_last ev_type ev_reason ev_obj ev_msg <<< "$line"
+  full_msg=$(_event_full_message "$ev_ns" "$ev_reason" "$ev_obj" "$ev_msg")
+  pane="[KEY] Event Message\n"
+  pane+="Namespace: ${ev_ns}\n"
+  pane+="Object:    ${ev_obj}\n"
+  pane+="Reason:    ${ev_reason}\n"
+  pane+="$(printf '%0.s-' {1..60})\n"
+  pane+="$full_msg"
+  _pager_text "event message › ${ev_obj}" "$(printf '%b' "$pane")" "[Esc]" "quit"
 }
 
 _confirm_quit() {
@@ -1974,33 +2091,51 @@ _render_events() {
     local msg_width=$(( TERM_COLS - w_ns - w_time - w_type - w_reason - w_obj - 10 ))
     (( msg_width < 10 )) && msg_width=10
 
-    local msg_lines=()
-    while IFS= read -r msg_line; do
-      msg_lines+=("$msg_line")
-    done < <(printf '%s\n' "$msg" | fold -s -w "$msg_width")
-    (( ${#msg_lines[@]} == 0 )) && msg_lines=("")
-
-    local msg_idx
-    for (( msg_idx=0; msg_idx<${#msg_lines[@]}; msg_idx++ )); do
-      (( row > TERM_ROWS - 4 )) && break
-      _at "$row" 1; _eol; _at "$row" 1
-
-      if (( msg_idx == 0 )); then
-        printf ' %b%-*s%b %-*s %b%-*s%b %-*s %-*s %b%s%b' \
-          "$C_GRAY"  "$w_ns"     "${ns:0:$w_ns}" \
-          "$_rrst" "$w_time"   "${time:0:$w_time}" \
-          "$tc"      "$w_type"   "${type:0:$w_type}" \
-          "$_rrst" "$w_reason" "${reason:0:$w_reason}" \
-                     "$w_obj"    "${obj:0:$w_obj}" \
-          "$C_LGRAY" "${msg_lines[$msg_idx]}" "$_rrst"
-      else
-        printf ' %*s %b%s%b' $(( w_ns + w_time + w_type + w_reason + w_obj + 6 )) '' \
-          "$C_LGRAY" "${msg_lines[$msg_idx]}" "$C_RESET"
+    if $ENHANCED_DETAIL_UI; then
+      local msg_preview="$msg"
+      if (( ${#msg_preview} > msg_width )); then
+        msg_preview="${msg_preview:0:$(( msg_width - 1 ))}…"
       fi
+
+      printf ' %b%-*s%b %-*s %b%-*s%b %-*s %-*s %b%s%b' \
+        "$C_GRAY"  "$w_ns"     "${ns:0:$w_ns}" \
+        "$_rrst" "$w_time"   "${time:0:$w_time}" \
+        "$tc"      "$w_type"   "${type:0:$w_type}" \
+        "$_rrst" "$w_reason" "${reason:0:$w_reason}" \
+                   "$w_obj"    "${obj:0:$w_obj}" \
+        "$C_LGRAY" "$msg_preview" "$_rrst"
 
       _eol; printf '%b' "$C_RESET"
       (( row++ ))
-    done
+    else
+      local msg_lines=()
+      while IFS= read -r msg_line; do
+        msg_lines+=("$msg_line")
+      done < <(printf '%s\n' "$msg" | fold -s -w "$msg_width")
+      (( ${#msg_lines[@]} == 0 )) && msg_lines=("")
+
+      local msg_idx
+      for (( msg_idx=0; msg_idx<${#msg_lines[@]}; msg_idx++ )); do
+        (( row > TERM_ROWS - 4 )) && break
+        _at "$row" 1; _eol; _at "$row" 1
+
+        if (( msg_idx == 0 )); then
+          printf ' %b%-*s%b %-*s %b%-*s%b %-*s %-*s %b%s%b' \
+            "$C_GRAY"  "$w_ns"     "${ns:0:$w_ns}" \
+            "$_rrst" "$w_time"   "${time:0:$w_time}" \
+            "$tc"      "$w_type"   "${type:0:$w_type}" \
+            "$_rrst" "$w_reason" "${reason:0:$w_reason}" \
+                       "$w_obj"    "${obj:0:$w_obj}" \
+            "$C_LGRAY" "${msg_lines[$msg_idx]}" "$_rrst"
+        else
+          printf ' %*s %b%s%b' $(( w_ns + w_time + w_type + w_reason + w_obj + 6 )) '' \
+            "$C_LGRAY" "${msg_lines[$msg_idx]}" "$C_RESET"
+        fi
+
+        _eol; printf '%b' "$C_RESET"
+        (( row++ ))
+      done
+    fi
   done
 
   if [[ ${#filtered[@]} -eq 0 ]]; then
@@ -3386,11 +3521,20 @@ _show_detail() {
     local wrapped_lines=()
     local source_line
     for source_line in "${all_lines[@]}"; do
+      if $ENHANCED_DETAIL_UI && [[ "$source_line" =~ ^[A-Z][a-zA-Z0-9_./\ -]*:$ ]] && (( ${#wrapped_lines[@]} > 0 )) && [[ -n "${wrapped_lines[-1]}" ]]; then
+        wrapped_lines+=("")
+      fi
       if [[ -z "$source_line" ]]; then
         wrapped_lines+=("")
       else
+        local wrapped_idx=0
         while IFS= read -r wrapped_line; do
-          wrapped_lines+=("$wrapped_line")
+          if $ENHANCED_DETAIL_UI && (( wrapped_idx > 0 )); then
+            wrapped_lines+=("    $wrapped_line")
+          else
+            wrapped_lines+=("$wrapped_line")
+          fi
+          (( wrapped_idx++ ))
         done < <(printf '%s\n' "$source_line" | fold -s -w "$wrap_width")
       fi
     done
@@ -3407,7 +3551,7 @@ _show_detail() {
     # Key bar — show only relevant actions for resource type
     _at 2 1
     if [[ "$resource" == "pods" || "$resource" == "pod" ]]; then
-      printf '%b%b[Esc]%b back  %b[↑↓/j/k]%b scroll  %b[g]%b top  %b[G]%b bottom  %b[l]%b logs  %b[e]%b exec  %b[y]%b yaml  %b[r]%b restart%b' \
+      printf '%b%b[Esc]%b back  %b[↑↓/j/k]%b scroll  %b[g]%b top  %b[G]%b bottom  %b[l]%b logs  %b[e]%b exec  %b[y]%b yaml  %b[r]%b restart' \
         "$BG_BAR" \
         "$C_CYAN" "$C_RESET$BG_BAR" \
         "$C_CYAN" "$C_RESET$BG_BAR" \
@@ -3416,28 +3560,31 @@ _show_detail() {
         "$C_CYAN" "$C_RESET$BG_BAR" \
         "$C_CYAN" "$C_RESET$BG_BAR" \
         "$C_CYAN" "$C_RESET$BG_BAR" \
-        "$C_CYAN" "$C_RESET$BG_BAR" \
-        "$C_RESET"
+        "$C_CYAN" "$C_RESET$BG_BAR"
     elif [[ "$resource" == "deployment" ]]; then
-      printf '%b%b[Esc]%b back  %b[↑↓/j/k]%b scroll  %b[g]%b top  %b[G]%b bottom  %b[y]%b yaml  %b[r]%b restart%b' \
+      printf '%b%b[Esc]%b back  %b[↑↓/j/k]%b scroll  %b[g]%b top  %b[G]%b bottom  %b[y]%b yaml  %b[r]%b restart' \
         "$BG_BAR" \
         "$C_CYAN" "$C_RESET$BG_BAR" \
         "$C_CYAN" "$C_RESET$BG_BAR" \
         "$C_CYAN" "$C_RESET$BG_BAR" \
         "$C_CYAN" "$C_RESET$BG_BAR" \
         "$C_CYAN" "$C_RESET$BG_BAR" \
-        "$C_CYAN" "$C_RESET$BG_BAR" \
-        "$C_RESET"
+        "$C_CYAN" "$C_RESET$BG_BAR"
     else
-      printf '%b%b[Esc]%b back  %b[↑↓/j/k]%b scroll  %b[g]%b top  %b[G]%b bottom  %b[y]%b yaml%b' \
+      printf '%b%b[Esc]%b back  %b[↑↓/j/k]%b scroll  %b[g]%b top  %b[G]%b bottom  %b[y]%b yaml' \
         "$BG_BAR" \
         "$C_CYAN" "$C_RESET$BG_BAR" \
         "$C_CYAN" "$C_RESET$BG_BAR" \
         "$C_CYAN" "$C_RESET$BG_BAR" \
         "$C_CYAN" "$C_RESET$BG_BAR" \
-        "$C_CYAN" "$C_RESET$BG_BAR" \
-        "$C_RESET"
+        "$C_CYAN" "$C_RESET$BG_BAR"
     fi
+    if $ENHANCED_DETAIL_UI && (( TERM_COLS >= 120 )); then
+      printf '  %b[c]%b copy  %b[o]%b export' \
+        "$C_CYAN" "$C_RESET$BG_BAR" \
+        "$C_CYAN" "$C_RESET$BG_BAR"
+    fi
+    printf '%b' "$C_RESET"
     _eol
 
     # Content
@@ -3448,7 +3595,9 @@ _show_detail() {
       _at "$out_row" 1
       if (( li < total_lines )); then
         local line="${wrapped_lines[$li]}"
-        if [[ "$line" =~ ^[A-Z][a-zA-Z\ ]*: ]]; then
+        if $ENHANCED_DETAIL_UI && [[ "$line" =~ ^[A-Z][a-zA-Z0-9_./\ -]*:$ ]]; then
+          printf '%b%b%s%b' "$C_YELLOW" "$C_BOLD" "$line" "$C_RESET"
+        elif [[ "$line" =~ ^[A-Z][a-zA-Z\ ]*: ]]; then
           printf '%b%b%s%b' "$C_CYAN" "$C_BOLD" "$line" "$C_RESET"
         elif [[ "$line" =~ Running|Ready|True|Healthy|Succeeded ]]; then
           printf '%b%s%b' "$C_GREEN" "$line" "$C_RESET"
@@ -3564,6 +3713,26 @@ _show_detail() {
       y|Y)
         _show_resource_yaml "$resource" "$name" "$ns"
         _render_detail
+        ;;
+      c|C)
+        if $ENHANCED_DETAIL_UI; then
+          if _copy_text "$output"; then
+            _notice_footer "Copied describe output to clipboard" "$C_GREEN"
+          else
+            _notice_footer "Clipboard unavailable; use [o] to export instead" "$C_YELLOW"
+          fi
+        fi
+        ;;
+      o|O)
+        if $ENHANCED_DETAIL_UI; then
+          local exported_path
+          exported_path=$(_export_text "${resource}-${name}" "$output") || exported_path=""
+          if [[ -n "$exported_path" ]]; then
+            _notice_footer "Exported describe output to ${exported_path}" "$C_GREEN"
+          else
+            _notice_footer "Export failed" "$C_RED"
+          fi
+        fi
         ;;
       r)
         if [[ "$resource" == "deployment" ]]; then
@@ -4053,9 +4222,11 @@ _show_help() {
     "f                       Failures-only toggle (All/workloads view)"
     "K                       Cycle workload filter (All view, includes applications)"
     "m                       Toggle include-more non-workloads (All view)"
+    "m                       Events: focused full-message pane"
     "x                       Decode secret (Secrets view)"
     "f                       Port-forward (Services view)"
     "t                       kubectl top nodes (Nodes view)"
+    "c / o                   Detail and pager views: copy / export text"
     ""
     "## Views - Row 1 (1-9)"
     "1 / p                   Pods"
@@ -4550,23 +4721,27 @@ _pager_text() {
 
     _at 2 1
     if [[ "$q_action" == "quit" ]]; then
-      printf '%b%b%s%b back  %b[q]%b quit  %b[↑↓/j/k]%b scroll  %b[g]%b top  %b[G]%b bottom%b' \
+      printf '%b%b%s%b back  %b[q]%b quit  %b[↑↓/j/k]%b scroll  %b[g]%b top  %b[G]%b bottom' \
         "$BG_BAR" \
         "$C_CYAN" "$back_label" "$C_RESET$BG_BAR" \
         "$C_CYAN" "$C_RESET$BG_BAR" \
         "$C_CYAN" "$C_RESET$BG_BAR" \
         "$C_CYAN" "$C_RESET$BG_BAR" \
-        "$C_CYAN" "$C_RESET$BG_BAR" \
-        "$C_RESET"
+        "$C_CYAN" "$C_RESET$BG_BAR"
     else
-      printf '%b%b%s%b back  %b[↑↓/j/k]%b scroll  %b[g]%b top  %b[G]%b bottom%b' \
+      printf '%b%b%s%b back  %b[↑↓/j/k]%b scroll  %b[g]%b top  %b[G]%b bottom' \
         "$BG_BAR" \
         "$C_CYAN" "$back_label" "$C_RESET$BG_BAR" \
         "$C_CYAN" "$C_RESET$BG_BAR" \
         "$C_CYAN" "$C_RESET$BG_BAR" \
-        "$C_CYAN" "$C_RESET$BG_BAR" \
-        "$C_RESET"
+        "$C_CYAN" "$C_RESET$BG_BAR"
     fi
+    if $ENHANCED_DETAIL_UI && (( TERM_COLS >= 110 )); then
+      printf '  %b[c]%b copy  %b[o]%b export' \
+        "$C_CYAN" "$C_RESET$BG_BAR" \
+        "$C_CYAN" "$C_RESET$BG_BAR"
+    fi
+    printf '%b' "$C_RESET"
     _eol
 
     local i
@@ -4639,6 +4814,26 @@ _pager_text() {
           "[B") (( offset + view_h < total_lines )) && (( offset++ )) ;;
           "") _clear; return ;;
         esac
+        ;;
+      c|C)
+        if $ENHANCED_DETAIL_UI; then
+          if _copy_text "$content"; then
+            _notice_footer "Copied pager text to clipboard" "$C_GREEN"
+          else
+            _notice_footer "Clipboard unavailable; use [o] to export instead" "$C_YELLOW"
+          fi
+        fi
+        ;;
+      o|O)
+        if $ENHANCED_DETAIL_UI; then
+          local exported_path
+          exported_path=$(_export_text "$title" "$content") || exported_path=""
+          if [[ -n "$exported_path" ]]; then
+            _notice_footer "Exported pager text to ${exported_path}" "$C_GREEN"
+          else
+            _notice_footer "Export failed" "$C_RED"
+          fi
+        fi
         ;;
     esac
     _render_pt
@@ -4813,24 +5008,7 @@ _main_loop() {
         # Events are not a describable resource in a useful way —
         # show the full event detail including the untruncated message
         if [[ "$CURRENT_VIEW" == "events" ]]; then
-          IFS=$'\t' read -r ev_ns ev_last ev_type ev_reason ev_obj ev_msg <<< "$line"
-          local ev_detail
-          ev_detail="Namespace:  ${ev_ns}\n"
-          ev_detail+="Last Seen:  ${ev_last}\n"
-          ev_detail+="Type:       ${ev_type}\n"
-          ev_detail+="Reason:     ${ev_reason}\n"
-          ev_detail+="Object:     ${ev_obj}\n"
-          ev_detail+="$(printf '%0.s-' {1..60})\n"
-          ev_detail+="Message:\n\n"
-          # Full message from kubectl (not truncated like custom-columns)
-          local full_msg
-          full_msg=$(kubectl get events -n "$ev_ns" \
-            --field-selector "involvedObject.name=${ev_obj},reason=${ev_reason}" \
-            --sort-by='.lastTimestamp' \
-            -o jsonpath='{.items[-1].message}' 2>/dev/null \
-            || echo "$ev_msg")
-          ev_detail+="$full_msg"
-          _pager_text "event › ${ev_obj}" "$(printf '%b' "$ev_detail")" "[Esc]" "quit"
+          _show_event_detail_from_line "$line"
           LAST_REFRESH=0
           continue
         fi
@@ -4969,6 +5147,11 @@ _main_loop() {
         elif [[ "$CURRENT_VIEW" == "deploys" ]]; then
           IFS=$'\t' read -r desc_ns desc_name _ <<< "$line"
           res="deployment"
+        elif [[ "$CURRENT_VIEW" == "events" ]]; then
+          _show_event_detail_from_line "$line"
+          LAST_REFRESH=0
+          _clear
+          continue
         else
           IFS=$'\t' read -r desc_ns desc_name _ <<< "$line"
         fi
@@ -5144,7 +5327,12 @@ _main_loop() {
         ;;
 
       m|M)
-        if [[ "$CURRENT_VIEW" == "all" ]]; then
+        if [[ "$CURRENT_VIEW" == "events" && "$ENHANCED_DETAIL_UI" == true ]]; then
+          local line; line=$(_selected_line) || continue
+          _show_event_message_from_line "$line"
+          LAST_REFRESH=0
+          _clear
+        elif [[ "$CURRENT_VIEW" == "all" ]]; then
           if $ALL_INCLUDE_MORE; then
             ALL_INCLUDE_MORE=false
           else
