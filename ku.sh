@@ -1597,7 +1597,6 @@ _render_generic() {
 }
 
 _refresh_data() {
-  echo "[DEBUG] _refresh_data called: CURRENT_VIEW='$CURRENT_VIEW' CURRENT_NS='$CURRENT_NS'" >&2
   case "$CURRENT_VIEW" in
     all)        _fetch_all        ;;
     pods)       _fetch_pods       ;;
@@ -1975,16 +1974,33 @@ _render_events() {
     local msg_width=$(( TERM_COLS - w_ns - w_time - w_type - w_reason - w_obj - 10 ))
     (( msg_width < 10 )) && msg_width=10
 
-    printf ' %b%-*s%b %-*s %b%-*s%b %-*s %-*s %b%s%b' \
-      "$C_GRAY"  "$w_ns"     "${ns:0:$w_ns}" \
-      "$_rrst" "$w_time"   "${time:0:$w_time}" \
-      "$tc"      "$w_type"   "${type:0:$w_type}" \
-      "$_rrst" "$w_reason" "${reason:0:$w_reason}" \
-                 "$w_obj"    "${obj:0:$w_obj}" \
-      "$C_LGRAY" "${msg:0:$msg_width}" "$_rrst"
+    local msg_lines=()
+    while IFS= read -r msg_line; do
+      msg_lines+=("$msg_line")
+    done < <(printf '%s\n' "$msg" | fold -s -w "$msg_width")
+    (( ${#msg_lines[@]} == 0 )) && msg_lines=("")
 
-    _eol; printf '%b' "$C_RESET"
-    (( row++ ))
+    local msg_idx
+    for (( msg_idx=0; msg_idx<${#msg_lines[@]}; msg_idx++ )); do
+      (( row > TERM_ROWS - 4 )) && break
+      _at "$row" 1; _eol; _at "$row" 1
+
+      if (( msg_idx == 0 )); then
+        printf ' %b%-*s%b %-*s %b%-*s%b %-*s %-*s %b%s%b' \
+          "$C_GRAY"  "$w_ns"     "${ns:0:$w_ns}" \
+          "$_rrst" "$w_time"   "${time:0:$w_time}" \
+          "$tc"      "$w_type"   "${type:0:$w_type}" \
+          "$_rrst" "$w_reason" "${reason:0:$w_reason}" \
+                     "$w_obj"    "${obj:0:$w_obj}" \
+          "$C_LGRAY" "${msg_lines[$msg_idx]}" "$_rrst"
+      else
+        printf ' %*s %b%s%b' $(( w_ns + w_time + w_type + w_reason + w_obj + 6 )) '' \
+          "$C_LGRAY" "${msg_lines[$msg_idx]}" "$C_RESET"
+      fi
+
+      _eol; printf '%b' "$C_RESET"
+      (( row++ ))
+    done
   done
 
   if [[ ${#filtered[@]} -eq 0 ]]; then
@@ -3355,7 +3371,7 @@ _show_detail() {
   while IFS= read -r line; do
     all_lines+=("$line")
   done <<< "$output"
-  local total_lines=${#all_lines[@]}
+  local total_lines=0
 
   local offset=0   # first visible line index
 
@@ -3363,7 +3379,22 @@ _show_detail() {
   _render_detail() {
     TERM_ROWS=$(tput lines 2>/dev/null || echo 40)
     TERM_COLS=$(tput cols  2>/dev/null || echo 120)
+    local wrap_width=$(( TERM_COLS - 1 ))
+    (( wrap_width < 1 )) && wrap_width=1
     local view_h=$(( TERM_ROWS - 3 ))  # rows available for content
+
+    local wrapped_lines=()
+    local source_line
+    for source_line in "${all_lines[@]}"; do
+      if [[ -z "$source_line" ]]; then
+        wrapped_lines+=("")
+      else
+        while IFS= read -r wrapped_line; do
+          wrapped_lines+=("$wrapped_line")
+        done < <(printf '%s\n' "$source_line" | fold -s -w "$wrap_width")
+      fi
+    done
+    total_lines=${#wrapped_lines[@]}
 
     _clear
 
@@ -3416,7 +3447,7 @@ _show_detail() {
       local out_row=$(( i + 3 ))
       _at "$out_row" 1
       if (( li < total_lines )); then
-        local line="${all_lines[$li]}"
+        local line="${wrapped_lines[$li]}"
         if [[ "$line" =~ ^[A-Z][a-zA-Z\ ]*: ]]; then
           printf '%b%b%s%b' "$C_CYAN" "$C_BOLD" "$line" "$C_RESET"
         elif [[ "$line" =~ Running|Ready|True|Healthy|Succeeded ]]; then
@@ -4490,15 +4521,26 @@ _pager_text() {
   local q_action="${4:-back}"
 
   local all_lines=()
-  while IFS= read -r line; do
-    all_lines+=("$line")
-  done <<< "$content"
-  local total_lines=${#all_lines[@]}
+  local total_lines=0
   local offset=0
 
   _render_pt() {
     TERM_ROWS=$(tput lines 2>/dev/null || echo 40)
     TERM_COLS=$(tput cols  2>/dev/null || echo 120)
+    local wrap_width=$(( TERM_COLS - 1 ))
+    (( wrap_width < 1 )) && wrap_width=1
+
+    all_lines=()
+    while IFS= read -r line; do
+      if [[ -z "$line" ]]; then
+        all_lines+=("")
+      else
+        while IFS= read -r wrapped; do
+          all_lines+=("$wrapped")
+        done < <(printf '%s\n' "$line" | fold -s -w "$wrap_width")
+      fi
+    done <<< "$content"
+    total_lines=${#all_lines[@]}
     local view_h=$(( TERM_ROWS - 3 ))
     _clear
 
@@ -4618,7 +4660,6 @@ _render_view() {
   _draw_header
   _draw_tabs
 
-  echo "[DEBUG] _fetch_data called: CURRENT_VIEW='$CURRENT_VIEW' CURRENT_NS='$CURRENT_NS'" >&2
   case "$CURRENT_VIEW" in
     all)        _render_all        ;;
     pods)       _render_pods       ;;
@@ -4788,8 +4829,7 @@ _main_loop() {
             --sort-by='.lastTimestamp' \
             -o jsonpath='{.items[-1].message}' 2>/dev/null \
             || echo "$ev_msg")
-          # Word-wrap at 80 chars for readability
-          ev_detail+=$(printf '%s' "$full_msg" | fold -s -w 80)
+          ev_detail+="$full_msg"
           _pager_text "event › ${ev_obj}" "$(printf '%b' "$ev_detail")" "[Esc]" "quit"
           LAST_REFRESH=0
           continue
