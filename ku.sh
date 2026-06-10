@@ -19,7 +19,7 @@
 #    0                   Compact All-resources view
 #    K                   Cycle kind filter (All view)
 #    f                   Failures only toggle (All view)
-#    m                   Toggle more kinds (All view) / expand event message
+#    m                   All: toggle include-more non-workloads / Events: focused full-message pane
 #    s                   ArgoCD sync (in ArgoCD view)
 #    c / o               Copy / export detail text
 #    R                   Rollouts view (Argo Rollouts)
@@ -4221,8 +4221,7 @@ _show_help() {
     "s                       ArgoCD: sync selected app (else: shortcut to Secrets)"
     "f                       Failures-only toggle (All/workloads view)"
     "K                       Cycle workload filter (All view, includes applications)"
-    "m                       Toggle include-more non-workloads (All view)"
-    "m                       Events: focused full-message pane"
+    "m                       All: toggle include-more non-workloads / Events: focused full-message pane"
     "x                       Decode secret (Secrets view)"
     "f                       Port-forward (Services view)"
     "t                       kubectl top nodes (Nodes view)"
