@@ -22,6 +22,7 @@
 #    m                   All: toggle include-more non-workloads / Events: focused full-message pane
 #    s                   ArgoCD sync (in ArgoCD view)
 #    c / o               Copy / export detail text
+#    I                   Incident timeline (selected resource)
 #    R                   Rollouts view (Argo Rollouts)
 #    ^                   Force refresh (Ctrl+^)
 #    n                   Switch namespace
@@ -4618,6 +4619,324 @@ _selected_pod_ns() {
   echo "$ns"
 }
 
+_incident_target_from_selected() {
+  local line
+  line=$(_selected_line) || return 1
+
+  INCIDENT_KIND=""
+  INCIDENT_NS=""
+  INCIDENT_NAME=""
+
+  case "$CURRENT_VIEW" in
+    pods)
+      IFS=$'\t' read -r INCIDENT_NS INCIDENT_NAME _ <<< "$line"
+      INCIDENT_KIND="pod"
+      ;;
+    deploys)
+      IFS=$'\t' read -r INCIDENT_NS INCIDENT_NAME _ <<< "$line"
+      INCIDENT_KIND="deployment"
+      ;;
+    services)
+      IFS=$'\t' read -r INCIDENT_NS INCIDENT_NAME _ <<< "$line"
+      INCIDENT_KIND="service"
+      ;;
+    configmaps)
+      IFS=$'\t' read -r INCIDENT_NS INCIDENT_NAME _ <<< "$line"
+      INCIDENT_KIND="configmap"
+      ;;
+    pvcs)
+      IFS=$'\t' read -r INCIDENT_NS INCIDENT_NAME _ <<< "$line"
+      INCIDENT_KIND="persistentvolumeclaim"
+      ;;
+    ingresses)
+      IFS=$'\t' read -r INCIDENT_NS INCIDENT_NAME _ <<< "$line"
+      INCIDENT_KIND="ingress"
+      ;;
+    jobs)
+      IFS=$'\t' read -r INCIDENT_NS INCIDENT_NAME _ <<< "$line"
+      INCIDENT_KIND="job"
+      ;;
+    cronjobs)
+      IFS=$'\t' read -r INCIDENT_NS INCIDENT_NAME _ <<< "$line"
+      INCIDENT_KIND="cronjob"
+      ;;
+    argocd)
+      IFS=$'\t' read -r INCIDENT_NS INCIDENT_NAME _ <<< "$line"
+      INCIDENT_KIND="application.argoproj.io"
+      ;;
+    certs)
+      IFS=$'\t' read -r INCIDENT_NS INCIDENT_NAME _ <<< "$line"
+      INCIDENT_KIND="certificate.cert-manager.io"
+      ;;
+    nodes)
+      IFS=$'\t' read -r INCIDENT_NAME _ <<< "$line"
+      INCIDENT_NS="-"
+      INCIDENT_KIND="node"
+      ;;
+    namespaces)
+      IFS=$'\t' read -r INCIDENT_NAME _ <<< "$line"
+      INCIDENT_NS="-"
+      INCIDENT_KIND="namespace"
+      ;;
+    generic)
+      if [[ "$CURRENT_NS" == "all" ]]; then
+        IFS=$'\t' read -r INCIDENT_NS INCIDENT_NAME _ <<< "$line"
+      else
+        IFS=$'\t' read -r INCIDENT_NAME _ <<< "$line"
+        INCIDENT_NS="$CURRENT_NS"
+      fi
+      INCIDENT_KIND="$GENERIC_RESOURCE"
+      ;;
+    all)
+      IFS=$'\t' read -r _ INCIDENT_NS INCIDENT_NAME _ _ INCIDENT_KIND <<< "$line"
+      ;;
+    events)
+      local obj
+      IFS=$'\t' read -r INCIDENT_NS _ _ _ obj _ <<< "$line"
+      if [[ "$obj" == */* ]]; then
+        INCIDENT_KIND="${obj%%/*}"
+        INCIDENT_NAME="${obj#*/}"
+        INCIDENT_KIND="${INCIDENT_KIND,,}"
+      else
+        INCIDENT_NAME="$obj"
+        INCIDENT_KIND="event"
+      fi
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  [[ -z "$INCIDENT_KIND" || -z "$INCIDENT_NAME" ]] && return 1
+  return 0
+}
+
+_incident_root_cause_summary() {
+  local kind="$1" ns="$2" name="$3"
+  local event_text="$4"
+  local summary="No obvious single root cause. Review latest warning events and recent rollout history."
+
+  if [[ "$event_text" == *"ImagePullBackOff"* || "$event_text" == *"ErrImagePull"* ]]; then
+    summary="Image pull failure detected. Check image tag, registry auth, and pull secret bindings."
+  elif [[ "$event_text" == *"CrashLoopBackOff"* || "$event_text" == *"Back-off restarting failed container"* ]]; then
+    summary="Crash loop behavior detected. Inspect container logs and startup command/env configuration."
+  elif [[ "$event_text" == *"FailedScheduling"* ]]; then
+    summary="Scheduling failure detected. Check node capacity, taints/tolerations, and affinity constraints."
+  elif [[ "$event_text" == *"Readiness probe failed"* || "$event_text" == *"Liveness probe failed"* ]]; then
+    summary="Probe failures detected. Validate probe path/port/timeouts and app startup latency."
+  elif [[ "$event_text" == *"FailedMount"* || "$event_text" == *"AttachVolume"* ]]; then
+    summary="Volume attach/mount issue detected. Verify PVC/PV state and CSI driver health."
+  fi
+
+  if [[ "$kind" == "pod" && "$ns" != "-" ]]; then
+    local waits restarts
+    waits="$(kubectl get pod "$name" -n "$ns" -o jsonpath='{range .status.containerStatuses[*]}{.state.waiting.reason}{"\\n"}{end}' 2>/dev/null | sed '/^$/d' | sort -u | tr '\n' ',' | sed 's/,$//')"
+    restarts="$(kubectl get pod "$name" -n "$ns" -o jsonpath='{range .status.containerStatuses[*]}{.restartCount}{"\\n"}{end}' 2>/dev/null | awk '{s+=$1} END{print s+0}')"
+
+    if [[ -n "$waits" ]]; then
+      summary="Pod waiting reason(s): ${waits}. Likely container-level failure before steady state."
+    elif [[ "${restarts:-0}" -gt 3 ]]; then
+      summary="Pod restart count is high (${restarts}). Investigate logs and recent config or image changes."
+    fi
+  fi
+
+  printf '%s' "$summary"
+}
+
+_incident_blast_radius_block() {
+  local kind_in="$1" ns="$2" name="$3"
+  local kind="${kind_in,,}"
+  kind="${kind%%.*}"
+
+  case "$kind" in
+    pods) kind="pod" ;;
+    deployments) kind="deployment" ;;
+    statefulsets) kind="statefulset" ;;
+    daemonsets) kind="daemonset" ;;
+    replicasets) kind="replicaset" ;;
+    services) kind="service" ;;
+    jobs) kind="job" ;;
+    cronjobs) kind="cronjob" ;;
+    namespaces) kind="namespace" ;;
+    nodes) kind="node" ;;
+  esac
+
+  local chain="${kind}/${name}"
+  local related_pods="n/a"
+  local related_workloads="n/a"
+
+  if [[ "$ns" == "-" || -z "$ns" ]]; then
+    printf 'owner chain: %s\nrelated pods: %s\nrelated workloads: %s\n' "$chain" "$related_pods" "$related_workloads"
+    return
+  fi
+
+  local owner_k owner_n owner2_k owner2_n
+  owner_k=""
+  owner_n=""
+  owner2_k=""
+  owner2_n=""
+
+  case "$kind" in
+    pod)
+      owner_k="$(kubectl get pod "$name" -n "$ns" -o jsonpath='{.metadata.ownerReferences[0].kind}' 2>/dev/null || true)"
+      owner_n="$(kubectl get pod "$name" -n "$ns" -o jsonpath='{.metadata.ownerReferences[0].name}' 2>/dev/null || true)"
+      if [[ -n "$owner_k" && -n "$owner_n" ]]; then
+        chain+=" -> ${owner_k}/${owner_n}"
+      fi
+      if [[ "$owner_k" == "ReplicaSet" ]]; then
+        owner2_k="$(kubectl get replicaset "$owner_n" -n "$ns" -o jsonpath='{.metadata.ownerReferences[0].kind}' 2>/dev/null || true)"
+        owner2_n="$(kubectl get replicaset "$owner_n" -n "$ns" -o jsonpath='{.metadata.ownerReferences[0].name}' 2>/dev/null || true)"
+        if [[ -n "$owner2_k" && -n "$owner2_n" ]]; then
+          chain+=" -> ${owner2_k}/${owner2_n}"
+        fi
+      fi
+
+      if [[ -n "$owner_k" && -n "$owner_n" ]]; then
+        related_pods="$(kubectl get pods -n "$ns" --no-headers \
+          -o custom-columns='NAME:.metadata.name,OWNER_KIND:.metadata.ownerReferences[0].kind,OWNER_NAME:.metadata.ownerReferences[0].name' 2>/dev/null \
+          | awk -v k="$owner_k" -v n="$owner_n" '$2==k && $3==n {c++} END{print c+0}')"
+      else
+        related_pods="1"
+      fi
+
+      if [[ "$owner2_k" == "Deployment" && -n "$owner2_n" ]]; then
+        related_workloads="1 (deployment)"
+      elif [[ "$owner_k" == "StatefulSet" || "$owner_k" == "DaemonSet" || "$owner_k" == "Job" ]]; then
+        related_workloads="1 (${owner_k,,})"
+      else
+        related_workloads="1"
+      fi
+      ;;
+
+    deployment)
+      local rs_count pod_count
+      rs_count="$(kubectl get rs -n "$ns" --no-headers \
+        -o custom-columns='NAME:.metadata.name,OWNER_KIND:.metadata.ownerReferences[0].kind,OWNER_NAME:.metadata.ownerReferences[0].name' 2>/dev/null \
+        | awk -v n="$name" '$2=="Deployment" && $3==n {c++} END{print c+0}')"
+
+      pod_count="$(kubectl get pods -n "$ns" --no-headers \
+        -o custom-columns='NAME:.metadata.name,OWNER_KIND:.metadata.ownerReferences[0].kind,OWNER_NAME:.metadata.ownerReferences[0].name' 2>/dev/null \
+        | awk -v n="$name" '
+          $2=="ReplicaSet" {
+            if ($3 ~ ("^" n "-")) c++
+          }
+          END {print c+0}
+        ')"
+
+      chain+=" -> ReplicaSet/*"
+      related_pods="$pod_count"
+      related_workloads="${rs_count} replicasets"
+      ;;
+
+    statefulset|daemonset|job)
+      local owner_kind
+      owner_kind="${kind^}"
+      related_pods="$(kubectl get pods -n "$ns" --no-headers \
+        -o custom-columns='NAME:.metadata.name,OWNER_KIND:.metadata.ownerReferences[0].kind,OWNER_NAME:.metadata.ownerReferences[0].name' 2>/dev/null \
+        | awk -v k="$owner_kind" -v n="$name" '$2==k && $3==n {c++} END{print c+0}')"
+      related_workloads="1 (${kind})"
+      ;;
+
+    cronjob)
+      local jobs_count pods_count
+      jobs_count="$(kubectl get jobs -n "$ns" --no-headers \
+        -o custom-columns='NAME:.metadata.name,OWNER_KIND:.metadata.ownerReferences[0].kind,OWNER_NAME:.metadata.ownerReferences[0].name' 2>/dev/null \
+        | awk -v n="$name" '$2=="CronJob" && $3==n {c++} END{print c+0}')"
+      pods_count="$(kubectl get pods -n "$ns" --no-headers \
+        -o custom-columns='NAME:.metadata.name,OWNER_KIND:.metadata.ownerReferences[0].kind,OWNER_NAME:.metadata.ownerReferences[0].name' 2>/dev/null \
+        | awk -v n="$name" '$2=="Job" && $3 ~ ("^" n "-") {c++} END{print c+0}')"
+      chain+=" -> Job/*"
+      related_pods="$pods_count"
+      related_workloads="${jobs_count} jobs"
+      ;;
+
+    service)
+      local selectors pod_count
+      selectors="$(kubectl get service "$name" -n "$ns" -o go-template='{{range $k,$v := .spec.selector}}{{printf "%s=%s," $k $v}}{{end}}' 2>/dev/null)"
+      selectors="${selectors%,}"
+      if [[ -n "$selectors" ]]; then
+        pod_count="$(kubectl get pods -n "$ns" -l "$selectors" --no-headers 2>/dev/null | wc -l | tr -d ' ')"
+        chain+=" -> Pod selector(${selectors})"
+        related_pods="$pod_count"
+      else
+        related_pods="0"
+      fi
+      related_workloads="n/a"
+      ;;
+
+    *)
+      related_pods="$(kubectl get pods -n "$ns" --no-headers 2>/dev/null | wc -l | tr -d ' ')"
+      related_workloads="$(kubectl get deploy,sts,ds,job,cronjob -n "$ns" --no-headers 2>/dev/null | wc -l | tr -d ' ') total"
+      ;;
+  esac
+
+  printf 'owner chain: %s\nrelated pods: %s\nrelated workloads: %s\n' "$chain" "$related_pods" "$related_workloads"
+}
+
+_show_incident_timeline() {
+  local kind="$1" ns="$2" name="$3"
+  local title_ns="$ns"
+  [[ "$title_ns" == "" ]] && title_ns="-"
+
+  local out=""
+  out+="Resource:  ${kind}/${name}\n"
+  out+="Namespace: ${title_ns}\n"
+  out+="Generated: $(date -u '+%Y-%m-%dT%H:%M:%SZ')\n"
+  out+="$(printf '%0.s-' {1..72})\n"
+
+  local rollout_block=""
+  if [[ "$ns" != "-" && "$kind" == "deployment" ]]; then
+    rollout_block="$(kubectl rollout history deployment "$name" -n "$ns" 2>/dev/null | tail -n 15)"
+    if [[ -n "$rollout_block" ]]; then
+      out+="\n[KEY] rollout timeline\n${rollout_block}\n"
+    fi
+  fi
+
+  local events=""
+  if [[ "$ns" != "-" ]]; then
+    events="$(kubectl get events -n "$ns" --sort-by=.lastTimestamp --no-headers \
+      -o custom-columns='TIME:.lastTimestamp,TYPE:.type,REASON:.reason,OBJECT:.involvedObject.name,MESSAGE:.message' 2>/dev/null \
+      | awk -v n="$name" '$4==n {print}' \
+      | tail -n 25)"
+  else
+    events="$(kubectl get events --all-namespaces --sort-by=.lastTimestamp --no-headers \
+      -o custom-columns='NS:.metadata.namespace,TIME:.lastTimestamp,TYPE:.type,REASON:.reason,OBJECT:.involvedObject.name,MESSAGE:.message' 2>/dev/null \
+      | awk -v n="$name" '$5==n {print}' \
+      | tail -n 25)"
+  fi
+
+  if [[ -n "$events" ]]; then
+    out+="\n[KEY] correlated events (latest 25)\n${events}\n"
+  else
+    out+="\n[KEY] correlated events\n(no direct events found for this object name)\n"
+  fi
+
+  if [[ "$ns" != "-" ]]; then
+    local ns_bad_pods ns_warn_count
+    ns_bad_pods="$(kubectl get pods -n "$ns" --no-headers 2>/dev/null | awk '$3 !~ /Running|Completed/ {c++} END{print c+0}')"
+    ns_warn_count="$(kubectl get events -n "$ns" --field-selector type=Warning --no-headers 2>/dev/null | wc -l | tr -d ' ')"
+    out+="\n[KEY] impact snapshot\n"
+    out+="namespace unhealthy pods: ${ns_bad_pods}\n"
+    out+="namespace warning events: ${ns_warn_count}\n"
+  fi
+
+  local blast
+  blast="$(_incident_blast_radius_block "$kind" "$ns" "$name")"
+  out+="\n[KEY] blast radius\n${blast}\n"
+
+  local summary
+  summary="$(_incident_root_cause_summary "$kind" "$ns" "$name" "$events")"
+  out+="\n[KEY] probable root cause\n${summary}\n"
+
+  out+="\n[KEY] suggested next actions\n"
+  out+="1) Open describe (Enter or d) for this resource and inspect Conditions.\n"
+  out+="2) For pods, open logs (l) and previous logs (v) to verify crash signature.\n"
+  out+="3) For deployments, inspect rollout history and recent image/config changes.\n"
+  out+="4) If ArgoCD-managed, compare sync revision and app health drift.\n"
+
+  _pager_text "incident timeline › ${kind}/${name}" "$(printf '%b' "$out")"
+}
+
 # ── Secret decoder ────────────────────────────────────────
 # Fetches all data keys from a secret via kubectl and base64-decodes
 # each value, then displays them in the scrollable pager.
@@ -5329,6 +5648,15 @@ _main_loop() {
           [[ "$CURRENT_VIEW" == "services" ]] && res="service"
           _port_forward "$res" "$name" "$ns"
           _clear
+        fi
+        ;;
+
+      # ── Incident timeline ─────────────────────────────────
+      I)
+        if _incident_target_from_selected; then
+          _show_incident_timeline "$INCIDENT_KIND" "$INCIDENT_NS" "$INCIDENT_NAME"
+          _clear
+          LAST_REFRESH=0
         fi
         ;;
 

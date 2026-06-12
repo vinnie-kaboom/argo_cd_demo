@@ -7,6 +7,20 @@
 - Root app (App of Apps): [apps/README.md](apps/README.md)
 - Agent Ops remediation pipeline: [apps/ops/agent-ops/README.md](apps/ops/agent-ops/README.md)
 
+## Kubernetes diagnostics quick check
+
+Use the standalone health script in this repo:
+
+- Basic cluster check: bash k8s-health.sh
+- Include warning events: bash k8s-health.sh -w
+- Check specific namespaces: bash k8s-health.sh -n my-app-dev -n my-app-staging
+- Override kubectl timeout: bash k8s-health.sh -t 15s
+
+Exit behavior:
+
+- Exit code 0 means no blocking failures were found.
+- Exit code 1 means one or more failing checks were detected.
+
 ## CI Tag Promotion Flow (Simple)
 
 This is the simple end-to-end flow for `.github/workflows/ci.yaml`:
