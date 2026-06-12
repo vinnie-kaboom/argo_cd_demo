@@ -87,6 +87,7 @@ ENHANCED_DETAIL_UI=true # single rollback point for detail/message UX additions
 ALL_KIND_FILTER="all"   # all | pods | applications | deploys | statefulsets | daemonsets | replicasets | jobs | cronjobs
 ALL_INCLUDE_MORE=false   # include services/configmaps/ingresses/pvcs when true
 ALL_FAIL_ONLY=false      # show only failed/problem rows when true
+TERM_INITIALIZED=false
 
 # Per-view load tracking — key is "view:namespace", value=1 when loaded
 declare -A VIEW_LOADED=()
@@ -98,7 +99,6 @@ ALL_KIND_FILTER_ORDER=("all" "pods" "applications" "deploys" "rollouts" "statefu
 _fetch_rollouts() {
   local ns_flag
   [[ "$CURRENT_NS" == "all" ]] && ns_flag="-A" || ns_flag="-n $CURRENT_NS"
-  echo "[DEBUG] _fetch_rollouts: CURRENT_NS='$CURRENT_NS' ns_flag='$ns_flag'" >&2
   mapfile -t DATA_LINES < <(
     kubectl get rollouts.argoproj.io $ns_flag --no-headers \
       -o custom-columns='NAMESPACE:.metadata.namespace,NAME:.metadata.name,DESIRED:.spec.replicas,CURRENT:.status.replicas,UP_TO_DATE:.status.updatedReplicas,AVAILABLE:.status.availableReplicas,AGE:.metadata.creationTimestamp' 2>/dev/null \
@@ -107,8 +107,6 @@ _fetch_rollouts() {
       printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", ns, name, desired, current, uptodate, available, age;
     }'
   )
-  echo "[DEBUG] DATA_LINES count: ${#DATA_LINES[@]}" >&2
-  for l in "${DATA_LINES[@]}"; do echo "[DEBUG] DATA_LINE: $l" >&2; done
 }
 _fetch_data() {
   case "$CURRENT_VIEW" in
@@ -138,31 +136,51 @@ _render_rollouts() {
   local start_row=4
   TERM_COLS=$(tput cols 2>/dev/null || echo 120)
   _draw_col_header $start_row "NAMESPACE" "NAME" "DESIRED" "CURRENT" "UP-TO-DATE" "AVAILABLE" "AGE"
-  local row=$((start_row+1))
-  local i line ns name desired current uptodate available age
-  for i in "${!DATA_LINES[@]}"; do
-    line="${DATA_LINES[$i]}"
+  _hline $(( start_row+1 )) 1 "$TERM_COLS" "-" "$C_GRAY"
+
+  local row=$(( start_row+2 ))
+  local filtered=()
+  mapfile -t filtered < <(_filtered_lines)
+  local _vis=$(( TERM_ROWS - 4 - start_row ))
+  local _end=$(( SCROLL_OFFSET + _vis ))
+  (( _end > ${#filtered[@]} )) && _end=${#filtered[@]}
+
+  local idx line ns name desired current uptodate available age
+  local w_ns=14 w_name=30 w_num=8 w_age=6
+
+  for (( idx=SCROLL_OFFSET; idx<_end; idx++ )); do
+    line="${filtered[$idx]}"
+    (( row > TERM_ROWS - 4 )) && break
     IFS=$'\t' read -r ns name desired current uptodate available age <<< "$line"
-    _at $((row+i)) 1
-    # Debug marker and clear separators
-    printf '[ROW] | %s | %s | %s | %s | %s | %s | %s' "$ns" "$name" "$desired" "$current" "$uptodate" "$available" "$age"
-    _eol
+
+    _at "$row" 1
+    local _rrst="$C_RESET"
+    if (( idx == SELECTED_IDX )); then
+      printf '%b' "$BG_SEL"
+      _rrst="$SEL_RST$BG_SEL"
+    fi
+
+    printf ' %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b %b%-*s%b %-*s' \
+      "$C_GRAY"  "$w_ns"  "${ns:0:$w_ns}" \
+      "$_rrst" "$C_WHITE" "$w_name" "${name:0:$w_name}" \
+      "$_rrst" "$C_WHITE" "$w_num" "${desired:0:$w_num}" \
+      "$_rrst" "$C_WHITE" "$w_num" "${current:0:$w_num}" \
+      "$_rrst" "$C_WHITE" "$w_num" "${uptodate:0:$w_num}" \
+      "$_rrst" "$C_GREEN" "$w_num" "${available:0:$w_num}" \
+      "$_rrst" "$w_age" "${age:0:$w_age}"
+
+    printf '%b' "$_rrst"; _eol; printf '%b' "$C_RESET"
+    (( row++ ))
   done
-  # If no data, print a visible message
-  if (( ${#DATA_LINES[@]} == 0 )); then
+
+  if (( ${#filtered[@]} == 0 )); then
     _at $((start_row+3)) 1
     printf '%bNo rollouts found%b' "$C_GRAY" "$C_RESET"
     _eol
   fi
-}
 
-render_view() {
-  case "$CURRENT_VIEW" in
-    rollouts)
-      _render_rollouts
-      ;;
-    # ...existing view renderers...
-  esac
+  _at $(( TERM_ROWS-2 )) 2
+  printf '%b%d rollouts%b' "$C_LGRAY" "${#filtered[@]}" "$C_RESET"
 }
 # Store fetched data globally to avoid re-fetching on every keypress
 declare -a DATA_LINES=()
@@ -179,6 +197,7 @@ _term_init() {
   stty -echo 2>/dev/null   # no input echo
   # Raw input mode for single-keypress reads
   stty cbreak 2>/dev/null || true
+  TERM_INITIALIZED=true
 }
 
 _term_restore_silent() {
@@ -194,7 +213,15 @@ _term_restore() {
   echo "  ${C_CYAN}kube-dash exited${C_RESET}"
 }
 
-trap '_term_restore; exit 0' EXIT INT TERM
+_on_exit() {
+  if [[ "$TERM_INITIALIZED" == "true" ]]; then
+    _term_restore
+  fi
+}
+
+trap '_on_exit' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # ── Input drain ────────────────────────────────────────────
 # Flushes any bytes already sitting in the terminal input buffer.
@@ -4005,7 +4032,9 @@ _exec_shell() {
   fi
 
   # Restore trap
-  trap '_term_restore; exit 0' EXIT INT TERM
+  trap '_on_exit' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
 
   printf '\n%bPress any key to return to kube-dash...%b' "$C_GRAY" "$C_RESET"
   # Use cooked read so the keypress echoes naturally
