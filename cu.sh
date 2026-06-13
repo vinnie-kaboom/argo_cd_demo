@@ -13,12 +13,14 @@ KIND_NODE=""
 USE_KIND_FALLBACK=false
 NO_KIND_FALLBACK=false
 CURRENT_VIEW="containers"
+PREVIOUS_VIEW="containers"
 SELECTED_IDX=0
 SCROLL_OFFSET=0
 FILTER=""
 WATCH_MODE=false
 REFRESH_INTERVAL=4
 LAST_REFRESH=0
+VIEW_SWITCHED=false
 TERM_INITIALIZED=false
 SORT_KEY="name"
 SORT_DESC=false
@@ -300,9 +302,22 @@ _preview_endpoint() {
 _fetch_containers() {
   mapfile -t DATA_LINES < <(
     _crictl ps -a --no-trunc 2>/dev/null | tail -n +2 | awk '{
-      cid=$1; image=$2; created=$3; state=$4; name=$5; attempt=$6; pod=$7;
+      cid=$1
+      image=$2
+      state=$(NF-4)
+      name=$(NF-3)
+      attempt=$(NF-2)
+      pod_id=$(NF-1)
+      pod_name=$NF
+
+      created=""
+      for (i=3; i<=NF-5; i++) {
+        created = created (created==""?"":" ") $i
+      }
+      if (created=="") created="-"
+
       if (cid=="") next;
-      printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", cid, name, state, image, pod, created, attempt;
+      printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", cid, name, state, image, pod_name, pod_id, created, attempt;
     }'
   )
 }
@@ -354,6 +369,20 @@ _fetch_data() {
   esac
 }
 
+_switch_view() {
+  local next="$1"
+  [[ -z "$next" ]] && return 0
+  if [[ "$next" != "$CURRENT_VIEW" ]]; then
+    PREVIOUS_VIEW="$CURRENT_VIEW"
+    CURRENT_VIEW="$next"
+    VIEW_SWITCHED=true
+  fi
+  SELECTED_IDX=0
+  SCROLL_OFFSET=0
+  _reset_sort_for_view
+  _refresh_data
+}
+
 _reset_sort_for_view() {
   SORT_DESC=false
   case "$CURRENT_VIEW" in
@@ -372,8 +401,8 @@ _sort_index_for_key() {
     containers:state) echo 3 ;;
     containers:image) echo 4 ;;
     containers:pod) echo 5 ;;
-    containers:created) echo 6 ;;
-    containers:attempt) echo 7 ;;
+    containers:created) echo 7 ;;
+    containers:attempt) echo 8 ;;
 
     pods:id) echo 1 ;;
     pods:name) echo 2 ;;
@@ -495,14 +524,14 @@ _set_alert() {
 _update_restart_alerts() {
   [[ "$CURRENT_VIEW" != "containers" ]] && return 0
 
-  local id name state image pod created attempt
+  local id name state image pod_name pod_id created attempt
   local prev numeric
   local -a bumps=()
   local -A next_attempts=()
 
   local line
   for line in "${DATA_LINES[@]}"; do
-    IFS=$'\t' read -r id name state image pod created attempt <<< "$line"
+    IFS=$'\t' read -r id name state image pod_name pod_id created attempt <<< "$line"
     [[ -z "$id" ]] && continue
     numeric="${attempt//[^0-9]/}"
     [[ -z "$numeric" ]] && numeric=0
@@ -536,7 +565,7 @@ _snapshot_capture() {
   case "$CURRENT_VIEW" in
     containers)
       for line in "${DATA_LINES[@]}"; do
-        IFS=$'\t' read -r id _name state _image _pod _created attempt <<< "$line"
+        IFS=$'\t' read -r id _name state _image _pod_name _pod_id _created attempt <<< "$line"
         [[ -z "$id" ]] && continue
         SNAPSHOT_MAP["$id"]="${state}|${attempt}"
       done
@@ -576,7 +605,7 @@ _snapshot_diff() {
   case "$CURRENT_VIEW" in
     containers)
       for line in "${DATA_LINES[@]}"; do
-        IFS=$'\t' read -r id _name state _image _pod _created attempt <<< "$line"
+        IFS=$'\t' read -r id _name state _image _pod_name _pod_id _created attempt <<< "$line"
         [[ -z "$id" ]] && continue
         current_map["$id"]="${state}|${attempt}"
 
@@ -641,10 +670,10 @@ _detail_text_for_selected() {
 
   case "$CURRENT_VIEW" in
     containers)
-      local id name state image pod created attempt
-      IFS=$'\t' read -r id name state image pod created attempt <<< "$line"
-      printf 'id=%s  name=%s  state=%s  image=%s  pod=%s  created=%s  attempt=%s' \
-        "${id:0:20}" "${name}" "${state}" "${image}" "${pod:0:20}" "${created}" "${attempt}"
+      local id name state image pod_name pod_id created attempt
+      IFS=$'\t' read -r id name state image pod_name pod_id created attempt <<< "$line"
+      printf 'id=%s  name=%s  state=%s  image=%s  pod=%s  pod-id=%s  created=%s  attempt=%s' \
+        "${id:0:20}" "${name}" "${state}" "${image}" "${pod_name}" "${pod_id:0:20}" "${created}" "${attempt}"
       ;;
     pods)
       local pid pname pns pstate pcreated patt
@@ -788,10 +817,10 @@ _draw_table() {
 
     case "$CURRENT_VIEW" in
       containers)
-        local id name state image pod created attempt badge
-        IFS=$'\t' read -r id name state image pod created attempt <<< "$line"
+        local id name state image pod_name pod_id created attempt badge
+        IFS=$'\t' read -r id name state image pod_name pod_id created attempt <<< "$line"
         badge=$(_state_badge "$state")
-        printf ' %-12s %-16s %-13s %-28s %-12s %-9s' "${id:0:12}" "${name:0:16}" "$badge" "${image:0:28}" "${pod:0:12}" "${created:0:9}"
+        printf ' %-12s %-16s %-13s %-28s %-12s %-9s' "${id:0:12}" "${name:0:16}" "$badge" "${image:0:28}" "${pod_name:0:12}" "${created:0:9}"
         ;;
       pods)
         local pid pname pns pstate pcreated patt pbadge
@@ -1048,7 +1077,10 @@ _incident_summary_view() {
     if (( pick >= 0 && pick < ${#image_rows[@]} )); then
       local _cnt image
       IFS=$'\t' read -r _cnt image <<< "${image_rows[$pick]}"
-      CURRENT_VIEW="containers"
+      if [[ "$CURRENT_VIEW" != "containers" ]]; then
+        PREVIOUS_VIEW="$CURRENT_VIEW"
+        CURRENT_VIEW="containers"
+      fi
       FILTER="$image"
       INCIDENT_MODE=true
       SELECTED_IDX=0
@@ -1060,7 +1092,10 @@ _incident_summary_view() {
     if (( wpick >= 0 && wpick < ${#workload_rows[@]} )); then
       local _wcnt workload
       IFS=$'\t' read -r _wcnt workload <<< "${workload_rows[$wpick]}"
-      CURRENT_VIEW="containers"
+      if [[ "$CURRENT_VIEW" != "containers" ]]; then
+        PREVIOUS_VIEW="$CURRENT_VIEW"
+        CURRENT_VIEW="containers"
+      fi
       FILTER="$workload"
       INCIDENT_MODE=true
       SELECTED_IDX=0
@@ -1164,10 +1199,10 @@ _tui_loop() {
 
     case "$key" in
       q) break ;;
-      1) CURRENT_VIEW="containers"; SELECTED_IDX=0; SCROLL_OFFSET=0; _reset_sort_for_view; _refresh_data ;;
-      2) CURRENT_VIEW="pods"; SELECTED_IDX=0; SCROLL_OFFSET=0; _reset_sort_for_view; _refresh_data ;;
-      3) CURRENT_VIEW="images"; SELECTED_IDX=0; SCROLL_OFFSET=0; _reset_sort_for_view; _refresh_data ;;
-      4) CURRENT_VIEW="info"; SELECTED_IDX=0; SCROLL_OFFSET=0; _reset_sort_for_view; _refresh_data ;;
+      1) _switch_view "containers" ;;
+      2) _switch_view "pods" ;;
+      3) _switch_view "images" ;;
+      4) _switch_view "info" ;;
       j)
         (( SELECTED_IDX++ ))
         ;;
@@ -1215,6 +1250,18 @@ _tui_loop() {
         case "$key" in
           '[A') (( SELECTED_IDX-- )) ;;
           '[B') (( SELECTED_IDX++ )) ;;
+          "")
+            if [[ "$CURRENT_VIEW" != "$PREVIOUS_VIEW" ]]; then
+              local tmp="$CURRENT_VIEW"
+              CURRENT_VIEW="$PREVIOUS_VIEW"
+              PREVIOUS_VIEW="$tmp"
+              VIEW_SWITCHED=true
+              SELECTED_IDX=0
+              SCROLL_OFFSET=0
+              _reset_sort_for_view
+              _refresh_data
+            fi
+            ;;
         esac
         ;;
       "")
