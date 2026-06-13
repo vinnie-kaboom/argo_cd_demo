@@ -1,0 +1,285 @@
+cu diagnostics bundle
+timestamp: 20260613-003742
+endpoint: kind://argocd-demo-control-plane
+view: containers
+incident_mode: false
+sort: name desc=false
+selected_id: none
+
+==== crictl info ====
+{
+  "status": {
+    "conditions": [
+      {
+        "type": "RuntimeReady",
+        "status": true,
+        "reason": "",
+        "message": ""
+      },
+      {
+        "type": "NetworkReady",
+        "status": true,
+        "reason": "",
+        "message": ""
+      }
+    ]
+  },
+  "cniconfig": {
+    "PluginDirs": [
+      "/opt/cni/bin"
+    ],
+    "PluginConfDir": "/etc/cni/net.d",
+    "PluginMaxConfNum": 1,
+    "Prefix": "eth",
+    "Networks": [
+      {
+        "Config": {
+          "Name": "cni-loopback",
+          "CNIVersion": "0.3.1",
+          "Plugins": [
+            {
+              "Network": {
+                "type": "loopback",
+                "ipam": {},
+                "dns": {}
+              },
+              "Source": "{\"type\":\"loopback\"}"
+            }
+          ],
+          "Source": "{\n\"cniVersion\": \"0.3.1\",\n\"name\": \"cni-loopback\",\n\"plugins\": [{\n  \"type\": \"loopback\"\n}]\n}"
+        },
+        "IFName": "lo"
+      },
+      {
+        "Config": {
+          "Name": "kindnet",
+          "CNIVersion": "0.3.1",
+          "Plugins": [
+            {
+              "Network": {
+                "type": "ptp",
+                "ipam": {
+                  "type": "host-local"
+                },
+                "dns": {}
+              },
+              "Source": "{\"ipMasq\":false,\"ipam\":{\"dataDir\":\"/run/cni-ipam-state\",\"ranges\":[[{\"subnet\":\"10.244.0.0/24\"}]],\"routes\":[{\"dst\":\"0.0.0.0/0\"}],\"type\":\"host-local\"},\"mtu\":1500,\"type\":\"ptp\"}"
+            },
+            {
+              "Network": {
+                "type": "portmap",
+                "capabilities": {
+                  "portMappings": true
+                },
+                "ipam": {},
+                "dns": {}
+              },
+              "Source": "{\"capabilities\":{\"portMappings\":true},\"type\":\"portmap\"}"
+            }
+          ],
+          "Source": "\n{\n\t\"cniVersion\": \"0.3.1\",\n\t\"name\": \"kindnet\",\n\t\"plugins\": [\n\t{\n\t\t\"type\": \"ptp\",\n\t\t\"ipMasq\": false,\n\t\t\"ipam\": {\n\t\t\t\"type\": \"host-local\",\n\t\t\t\"dataDir\": \"/run/cni-ipam-state\",\n\t\t\t\"routes\": [\n\t\t\t\t\n\t\t\t\t\n\t\t\t\t{ \"dst\": \"0.0.0.0/0\" }\n\t\t\t],\n\t\t\t\"ranges\": [\n\t\t\t\t\n\t\t\t\t\n\t\t\t\t[ { \"subnet\": \"10.244.0.0/24\" } ]\n\t\t\t]\n\t\t}\n\t\t,\n\t\t\"mtu\": 1500\n\t\t\n\t},\n\t{\n\t\t\"type\": \"portmap\",\n\t\t\"capabilities\": {\n\t\t\t\"portMappings\": true\n\t\t}\n\t}\n\t]\n}\n"
+        },
+        "IFName": "eth0"
+      }
+    ]
+  },
+  "config": {
+    "containerd": {
+      "snapshotter": "overlayfs",
+      "defaultRuntimeName": "runc",
+      "defaultRuntime": {
+        "runtimeType": "",
+        "runtimePath": "",
+        "runtimeEngine": "",
+        "PodAnnotations": null,
+        "ContainerAnnotations": null,
+        "runtimeRoot": "",
+        "options": null,
+        "privileged_without_host_devices": false,
+        "privileged_without_host_devices_all_devices_allowed": false,
+        "baseRuntimeSpec": "",
+        "cniConfDir": "",
+        "cniMaxConfNum": 0,
+        "snapshotter": "",
+        "sandboxMode": ""
+      },
+      "untrustedWorkloadRuntime": {
+        "runtimeType": "",
+        "runtimePath": "",
+        "runtimeEngine": "",
+        "PodAnnotations": null,
+        "ContainerAnnotations": null,
+        "runtimeRoot": "",
+        "options": null,
+        "privileged_without_host_devices": false,
+        "privileged_without_host_devices_all_devices_allowed": false,
+        "baseRuntimeSpec": "",
+        "cniConfDir": "",
+        "cniMaxConfNum": 0,
+        "snapshotter": "",
+        "sandboxMode": ""
+      },
+      "runtimes": {
+        "runc": {
+          "runtimeType": "io.containerd.runc.v2",
+          "runtimePath": "",
+          "runtimeEngine": "",
+          "PodAnnotations": null,
+          "ContainerAnnotations": null,
+          "runtimeRoot": "",
+          "options": {
+            "SystemdCgroup": true
+          },
+          "privileged_without_host_devices": false,
+          "privileged_without_host_devices_all_devices_allowed": false,
+          "baseRuntimeSpec": "/etc/containerd/cri-base.json",
+          "cniConfDir": "",
+          "cniMaxConfNum": 0,
+          "snapshotter": "",
+          "sandboxMode": "podsandbox"
+        },
+        "test-handler": {
+          "runtimeType": "io.containerd.runc.v2",
+          "runtimePath": "",
+          "runtimeEngine": "",
+          "PodAnnotations": null,
+          "ContainerAnnotations": null,
+          "runtimeRoot": "",
+          "options": {
+            "SystemdCgroup": true
+          },
+          "privileged_without_host_devices": false,
+          "privileged_without_host_devices_all_devices_allowed": false,
+          "baseRuntimeSpec": "/etc/containerd/cri-base.json",
+          "cniConfDir": "",
+          "cniMaxConfNum": 0,
+          "snapshotter": "",
+          "sandboxMode": "podsandbox"
+        }
+      },
+      "noPivot": false,
+      "disableSnapshotAnnotations": true,
+      "discardUnpackedLayers": true,
+      "ignoreBlockIONotEnabledErrors": false,
+      "ignoreRdtNotEnabledErrors": false
+    },
+    "cni": {
+      "binDir": "/opt/cni/bin",
+      "confDir": "/etc/cni/net.d",
+      "maxConfNum": 1,
+      "setupSerially": false,
+      "confTemplate": "",
+      "ipPref": ""
+    },
+    "registry": {
+      "configPath": "",
+      "mirrors": null,
+      "configs": null,
+      "auths": null,
+      "headers": null
+    },
+    "imageDecryption": {
+      "keyModel": "node"
+    },
+    "disableTCPService": true,
+    "streamServerAddress": "127.0.0.1",
+    "streamServerPort": "0",
+    "streamIdleTimeout": "4h0m0s",
+    "enableSelinux": false,
+    "selinuxCategoryRange": 1024,
+    "sandboxImage": "registry.k8s.io/pause:3.7",
+    "statsCollectPeriod": 10,
+    "systemdCgroup": false,
+    "enableTLSStreaming": false,
+    "x509KeyPairStreaming": {
+      "tlsCertFile": "",
+      "tlsKeyFile": ""
+    },
+    "maxContainerLogSize": 16384,
+    "disableCgroup": false,
+    "disableApparmor": false,
+    "restrictOOMScoreAdj": false,
+    "maxConcurrentDownloads": 3,
+    "disableProcMount": false,
+    "unsetSeccompProfile": "",
+    "tolerateMissingHugetlbController": true,
+    "disableHugetlbController": true,
+    "device_ownership_from_security_context": false,
+    "ignoreImageDefinedVolumes": false,
+    "netnsMountsUnderStateDir": false,
+    "enableUnprivilegedPorts": false,
+    "enableUnprivilegedICMP": false,
+    "enableCDI": false,
+    "cdiSpecDirs": [
+      "/etc/cdi",
+      "/var/run/cdi"
+    ],
+    "imagePullProgressTimeout": "5m0s",
+    "drainExecSyncIOTimeout": "0s",
+    "containerdRootDir": "/var/lib/containerd",
+    "containerdEndpoint": "/run/containerd/containerd.sock",
+    "rootDir": "/var/lib/containerd/io.containerd.grpc.v1.cri",
+    "stateDir": "/run/containerd/io.containerd.grpc.v1.cri"
+  },
+  "golang": "go1.20.13",
+  "lastCNILoadStatus": "OK",
+  "lastCNILoadStatus.default": "OK"
+}
+
+==== crictl ps -a ====
+CONTAINER           IMAGE               CREATED             STATE               NAME                      ATTEMPT             POD ID              POD
+759306ec95bb3       0500518ebaa68       36 minutes ago      Running             local-path-provisioner    4                   55937d4ecb6e3       local-path-provisioner-7577fdbbfb-5kmz5
+d3cb13ef71648       0500518ebaa68       36 minutes ago      Exited              local-path-provisioner    3                   55937d4ecb6e3       local-path-provisioner-7577fdbbfb-5kmz5
+ba328afa7245c       cbb01a7bd410d       36 minutes ago      Running             coredns                   2                   9fbebbedda5e1       coredns-76f75df574-d8s8q
+b3d4b19aaca24       4950bb10b3f87       36 minutes ago      Running             kindnet-cni               2                   deb65aa6ccdef       kindnet-prx9w
+4d9a10441a83b       cbb01a7bd410d       36 minutes ago      Running             coredns                   2                   608a3b3382bd4       coredns-76f75df574-9n7ff
+aa8eb4fb722cb       95d40da343e92       37 minutes ago      Running             kube-proxy                2                   75f9464e6620f       kube-proxy-p9z99
+4fedb8f0c8fcc       a0eed15eed449       37 minutes ago      Running             etcd                      2                   63cec93e2f764       etcd-argocd-demo-control-plane
+84e2eb83f5e28       f60003f4b3479       37 minutes ago      Running             kube-scheduler            2                   26fcf7a1c792f       kube-scheduler-argocd-demo-control-plane
+7a3069d5064f5       21704b3a9676f       37 minutes ago      Running             kube-controller-manager   3                   a14fc297e412c       kube-controller-manager-argocd-demo-control-plane
+3b9b589e0ccfd       a2336270923ab       37 minutes ago      Running             kube-apiserver            2                   4ccf30ef2fedc       kube-apiserver-argocd-demo-control-plane
+458e0178d94ad       cbb01a7bd410d       6 hours ago         Exited              coredns                   1                   916784231e977       coredns-76f75df574-9n7ff
+78734e949797c       cbb01a7bd410d       6 hours ago         Exited              coredns                   1                   6da423d97f1d0       coredns-76f75df574-d8s8q
+ea7a0b5016f14       95d40da343e92       6 hours ago         Exited              kube-proxy                1                   fda3cad1aef1d       kube-proxy-p9z99
+440ade843c2b4       4950bb10b3f87       6 hours ago         Exited              kindnet-cni               1                   95cbad4e67965       kindnet-prx9w
+f0406b15ed9e4       f60003f4b3479       6 hours ago         Exited              kube-scheduler            1                   0afdc85387ecd       kube-scheduler-argocd-demo-control-plane
+64e538a49337b       21704b3a9676f       6 hours ago         Exited              kube-controller-manager   2                   3476da4584f28       kube-controller-manager-argocd-demo-control-plane
+9b6518683ad0a       a2336270923ab       6 hours ago         Exited              kube-apiserver            1                   05b86b7e02397       kube-apiserver-argocd-demo-control-plane
+96408c88ba1a5       a0eed15eed449       6 hours ago         Exited              etcd                      1                   9f65642f66eb1       etcd-argocd-demo-control-plane
+
+==== crictl pods ====
+POD ID              CREATED             STATE               NAME                                                NAMESPACE            ATTEMPT             RUNTIME
+608a3b3382bd4       37 minutes ago      Ready               coredns-76f75df574-9n7ff                            kube-system          2                   (default)
+9fbebbedda5e1       37 minutes ago      Ready               coredns-76f75df574-d8s8q                            kube-system          2                   (default)
+55937d4ecb6e3       37 minutes ago      Ready               local-path-provisioner-7577fdbbfb-5kmz5             local-path-storage   2                   (default)
+deb65aa6ccdef       37 minutes ago      Ready               kindnet-prx9w                                       kube-system          2                   (default)
+75f9464e6620f       37 minutes ago      Ready               kube-proxy-p9z99                                    kube-system          2                   (default)
+26fcf7a1c792f       37 minutes ago      Ready               kube-scheduler-argocd-demo-control-plane            kube-system          2                   (default)
+a14fc297e412c       37 minutes ago      Ready               kube-controller-manager-argocd-demo-control-plane   kube-system          2                   (default)
+4ccf30ef2fedc       37 minutes ago      Ready               kube-apiserver-argocd-demo-control-plane            kube-system          2                   (default)
+63cec93e2f764       37 minutes ago      Ready               etcd-argocd-demo-control-plane                      kube-system          2                   (default)
+6da423d97f1d0       6 hours ago         NotReady            coredns-76f75df574-d8s8q                            kube-system          1                   (default)
+916784231e977       6 hours ago         NotReady            coredns-76f75df574-9n7ff                            kube-system          1                   (default)
+fda3cad1aef1d       6 hours ago         NotReady            kube-proxy-p9z99                                    kube-system          1                   (default)
+95cbad4e67965       6 hours ago         NotReady            kindnet-prx9w                                       kube-system          1                   (default)
+0afdc85387ecd       6 hours ago         NotReady            kube-scheduler-argocd-demo-control-plane            kube-system          1                   (default)
+3476da4584f28       6 hours ago         NotReady            kube-controller-manager-argocd-demo-control-plane   kube-system          1                   (default)
+9f65642f66eb1       6 hours ago         NotReady            etcd-argocd-demo-control-plane                      kube-system          1                   (default)
+05b86b7e02397       6 hours ago         NotReady            kube-apiserver-argocd-demo-control-plane            kube-system          1                   (default)
+
+==== crictl images ====
+IMAGE                                           TAG                  IMAGE ID            SIZE
+docker.io/kindest/kindnetd                      v20240202-8f1494ea   4950bb10b3f87       27.8MB
+docker.io/kindest/local-path-helper             v20230510-486859a6   be300acfc8622       3.05MB
+docker.io/kindest/local-path-provisioner        v20240202-8f1494ea   0500518ebaa68       19.4MB
+registry.k8s.io/coredns/coredns                 v1.11.1              cbb01a7bd410d       18.2MB
+registry.k8s.io/etcd                            3.5.10-0             a0eed15eed449       56.6MB
+registry.k8s.io/kube-apiserver-amd64            v1.29.2              a2336270923ab       86.2MB
+registry.k8s.io/kube-apiserver                  v1.29.2              a2336270923ab       86.2MB
+registry.k8s.io/kube-controller-manager-amd64   v1.29.2              21704b3a9676f       80.3MB
+registry.k8s.io/kube-controller-manager         v1.29.2              21704b3a9676f       80.3MB
+registry.k8s.io/kube-proxy-amd64                v1.29.2              95d40da343e92       83.5MB
+registry.k8s.io/kube-proxy                      v1.29.2              95d40da343e92       83.5MB
+registry.k8s.io/kube-scheduler-amd64            v1.29.2              f60003f4b3479       60.6MB
+registry.k8s.io/kube-scheduler                  v1.29.2              f60003f4b3479       60.6MB
+registry.k8s.io/pause                           3.7                  221177c6082a8       311kB
