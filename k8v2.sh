@@ -36,11 +36,38 @@
 
 set -o pipefail
 
-KUBECTL_BIN="/var/lib/rancher/rke2/bin/kubectl"
-KUBECONFIG_PATH="/etc/rancher/rke2/rke2.yaml"
+# Allow overrides via env vars, then auto-detect sane defaults.
+KUBECTL_BIN="${KUBECTL_BIN:-}"
+KUBECONFIG_PATH="${KUBECONFIG_PATH:-}"
+
+if [[ -z "$KUBECTL_BIN" ]]; then
+  if [[ -x "/var/lib/rancher/rke2/bin/kubectl" ]]; then
+    KUBECTL_BIN="/var/lib/rancher/rke2/bin/kubectl"
+  elif command -v kubectl >/dev/null 2>&1; then
+    KUBECTL_BIN="$(command -v kubectl)"
+  fi
+fi
+
+if [[ -z "$KUBECONFIG_PATH" ]]; then
+  if [[ -n "${KUBECONFIG:-}" && -f "$KUBECONFIG" ]]; then
+    KUBECONFIG_PATH="$KUBECONFIG"
+  elif [[ -f "/etc/rancher/rke2/rke2.yaml" ]]; then
+    KUBECONFIG_PATH="/etc/rancher/rke2/rke2.yaml"
+  elif [[ -f "$HOME/.kube/config" ]]; then
+    KUBECONFIG_PATH="$HOME/.kube/config"
+  fi
+fi
 
 kubectl() {
-  sudo "$KUBECTL_BIN" --kubeconfig "$KUBECONFIG_PATH" "$@"
+  local _cmd=("$KUBECTL_BIN")
+  [[ -n "$KUBECONFIG_PATH" ]] && _cmd+=(--kubeconfig "$KUBECONFIG_PATH")
+
+  # RKE2 paths are often root-owned; use sudo only in that specific case.
+  if [[ "$KUBECTL_BIN" == "/var/lib/rancher/rke2/bin/kubectl" ]]; then
+    sudo "${_cmd[@]}" "$@"
+  else
+    "${_cmd[@]}" "$@"
+  fi
 }
 
 # ── Version ────────────────────────────────────────────────
@@ -4998,28 +5025,26 @@ _decode_secret() {
   output+="Type: ${stype}\n"
   output+="$(printf '%0.s-' {1..60})\n\n"
 
-  # Get all keys
-  local keys=()
-  mapfile -t keys < <(
+  # Get all key/value pairs safely (works for keys with dots like admin.password)
+  local kv_pairs=()
+  mapfile -t kv_pairs < <(
     kubectl get secret "$name" -n "$ns" \
-      -o jsonpath='{.data}' 2>/dev/null \
-    | grep -o '"[^"]*":' \
-    | tr -d '":'
+      -o go-template='{{range $k,$v := .data}}{{printf "%s\t%s\n" $k $v}}{{end}}' 2>/dev/null
   )
 
-  if [[ ${#keys[@]} -eq 0 ]]; then
+  if [[ ${#kv_pairs[@]} -eq 0 ]]; then
     output+="(no data keys found)\n"
   else
-    for key in "${keys[@]}"; do
-      local encoded decoded
-      encoded=$(kubectl get secret "$name" -n "$ns" \
-        -o jsonpath="{.data.${key}}" 2>/dev/null || echo "")
+    local kv key encoded decoded
+    for kv in "${kv_pairs[@]}"; do
+      key="${kv%%$'\t'*}"
+      encoded="${kv#*$'\t'}"
 
       if [[ -z "$encoded" ]]; then
         decoded="(empty)"
       else
         decoded=$(printf '%s' "$encoded" | base64 -d 2>/dev/null \
-          || echo "(could not decode — may be binary data)")
+          || echo "(could not decode - may be binary data)")
       fi
 
       output+="[KEY] ${key}\n"
@@ -5791,10 +5816,23 @@ _bootstrap() {
   fi
 
   # kubectl — verify the wrapper binary is reachable
-  if ! sudo "$KUBECTL_BIN" --kubeconfig "$KUBECONFIG_PATH" version --client &>/dev/null; then
+  if [[ -z "$KUBECTL_BIN" || ! -x "$KUBECTL_BIN" ]]; then
+    echo ""
+    echo "  ✗ kubectl not found."
+    echo "    Set KUBECTL_BIN or install kubectl in PATH."
+    echo ""
+    exit 1
+  fi
+
+  if ! kubectl version --client &>/dev/null; then
     echo ""
     echo "  ✗ kubectl not reachable at: $KUBECTL_BIN"
-    echo "    Check that KUBECTL_BIN and KUBECONFIG_PATH are correct at the top of this script."
+    if [[ -n "$KUBECONFIG_PATH" ]]; then
+      echo "    using kubeconfig: $KUBECONFIG_PATH"
+    else
+      echo "    no explicit kubeconfig selected (kubectl default resolution in use)."
+    fi
+    echo "    Check KUBECTL_BIN/KUBECONFIG_PATH env vars if needed."
     echo ""
     exit 1
   fi
